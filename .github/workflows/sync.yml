@@ -1,40 +1,29 @@
-name: Upstream Sync
-
-permissions:
-  contents: write
-
+name: Auto Sync Upstream
 on:
   schedule:
-    - cron: "0 0 * * *" # every day
+    - cron: '0 2 * * *'  # 每天UTC时间 02:00
   workflow_dispatch:
 
 jobs:
-  sync_latest_from_upstream:
-    name: Sync latest commits from upstream repo
+  sync:
     runs-on: ubuntu-latest
-    if: ${{ github.event.repository.fork }}
-
     steps:
-      # Step 1: run a standard checkout action
-      - name: Checkout target repo
-        uses: actions/checkout@v3
-
-      # Step 2: run the sync action
-      - name: Sync upstream changes
-        id: sync
-        uses: aormsby/Fork-Sync-With-Upstream-action@v3.4
+      - name: Checkout local repository
+        uses: actions/checkout@v4
         with:
-          upstream_sync_repo: huilang-me/CF-Server-Monitor
-          upstream_sync_branch: main
-          target_sync_branch: main
-          target_repo_token: ${{ secrets.GITHUB_TOKEN }} # automatically generated, no need to set
+          token: ${{ secrets.SYNC_PAT }}
+          fetch-depth: 0 
 
-          # Set test_mode true to run tests instead of the true action!!
-          test_mode: false
-
-      - name: Sync check
-        if: failure()
+      - name: Smart Merge from huilang-me
         run: |
-          echo "[Error] 由于上游仓库的 workflow 文件变更，导致 GitHub 自动暂停了本次自动更新，请前往仓库页面手动执行 Sync Fork 操作。"
-          echo "[Error] Due to a change in the workflow file of the upstream repository, GitHub has automatically suspended the scheduled automatic update. You need to manually sync your fork."
-          exit 1
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git remote add upstream https://github.com/huilang-me/CF-Server-Monitor.git
+          git fetch upstream
+          
+          git merge upstream/main --strategy-option=ours -m "Auto sync upstream changes" || echo "No changes or handled merge."
+          
+          # 必须使用存在 SECRETS 里的具有 workflow 和 repo 权限的自定义 PAT 进行推流，才能彻底打通连带反应
+          git remote set-url origin https://x-access-token:${{ secrets.SYNC_PAT }}@github.com/SKLDFHIENM/CF-Server-Monitor.git
+          git push origin main
