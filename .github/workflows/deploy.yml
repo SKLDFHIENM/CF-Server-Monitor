@@ -13,24 +13,8 @@ on:
     types: [upstream-sync-dispatch]
 
 jobs:
-  check:
-    runs-on: ubuntu-latest
-    outputs:
-      should_deploy: ${{ steps.decide.outputs.should_deploy }}
-    steps:
-      - id: decide
-        run: |
-          if [ -n "$CF_ACCOUNT_ID" ] || [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            echo "should_deploy=true" >> $GITHUB_OUTPUT
-          else
-            echo "should_deploy=false" >> $GITHUB_OUTPUT
-          fi
-        env:
-          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
-          EVENT_NAME: ${{ github.event_name }}
-
   deploy:
-        runs-on: ubuntu-latest
+    runs-on: ubuntu-latest
     name: Deploy
     steps:
       - name: 📥 Checkout code
