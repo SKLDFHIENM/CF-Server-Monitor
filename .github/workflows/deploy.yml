@@ -30,9 +30,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
 
   deploy:
-    needs: check
-    if: needs.check.outputs.should_deploy == 'true'
-    runs-on: ubuntu-latest
+        runs-on: ubuntu-latest
     name: Deploy
     steps:
       - name: 📥 Checkout code
