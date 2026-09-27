@@ -9,6 +9,8 @@ on:
       - '.gitignore'
       - 'LICENSE'
   workflow_dispatch:
+  repository_dispatch:
+    types: [upstream-sync-dispatch]
 
 jobs:
   check:
