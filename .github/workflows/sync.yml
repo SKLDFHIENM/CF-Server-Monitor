@@ -26,4 +26,13 @@ jobs:
           
           # 必须使用存在 SECRETS 里的具有 workflow 和 repo 权限的自定义 PAT 进行推流，才能彻底打通连带反应
           git remote set-url origin https://x-access-token:${{ secrets.SYNC_PAT }}@github.com/SKLDFHIENM/CF-Server-Monitor.git
+          
           git push origin main
+          
+      - name: Trigger Deploy Action
+        run: |
+          curl -X POST -H "Accept: application/vnd.github.v3+json" \
+          -H "Authorization: token ${{ secrets.SYNC_PAT }}" \
+          https://api.github.com/repos/SKLDFHIENM/CF-Server-Monitor/dispatches \
+          -d '{"event_type": "upstream-sync-dispatch"}'
+
