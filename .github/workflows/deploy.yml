@@ -20,11 +20,7 @@ jobs:
     steps:
       - id: decide
         run: |
-          if [ -n "$CF_ACCOUNT_ID" ] || [ "$EVENT_NAME" = "workflow_dispatch" ] || [ "$EVENT_NAME" = "repository_dispatch" ]; then
-            echo "should_deploy=true" >> $GITHUB_OUTPUT
-          else
-            echo "should_deploy=true" >> $GITHUB_OUTPUT
-          fi
+          echo "should_deploy=true" >> $GITHUB_OUTPUT
         env:
           CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
           EVENT_NAME: ${{ github.event_name }}
