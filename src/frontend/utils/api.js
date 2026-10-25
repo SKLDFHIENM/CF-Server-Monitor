@@ -284,12 +284,6 @@ export const isServerOnline = (server, now = Date.now()) => {
   return lastUpdated && (now - lastUpdated) < TIME.ONLINE_THRESHOLD_MS
 }
 
-export const fetchServers = async () => {
-  const result = await http.get('/api/servers')
-  if (result.error) return null
-  return result.data
-}
-
 export const fetchServersAll = async () => {
   const results = await http.getAll('/api/servers')
   const multiSite = hasMultipleApiBases()

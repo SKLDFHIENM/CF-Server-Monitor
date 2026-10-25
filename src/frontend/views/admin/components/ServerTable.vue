@@ -26,12 +26,14 @@
         <button v-if="newServerGroup" @click="newServerGroup = ''" class="toolbar-select-clear" aria-label="Clear">✕</button>
       </div>
       <button @click="$emit('add-server')" class="btn btn-primary">+ {{ trans.addServer }}</button>
+      <button @click="$emit('auto-discovery-cmd')" class="btn">🤖 {{ trans.autoAdd }}</button>
     </div>
 
     <div class="batch-actions">
       <button @click="$emit('batch-edit')" class="btn btn-blue" :disabled="selectedServers.length === 0">✏️ {{ trans.batchEdit }}</button>
       <button @click="$emit('batch-delete')" class="btn btn-red">🗑 {{ trans.batchDelete }}</button>
       <button @click="$emit('toggle-select-all')" class="btn">☐ {{ trans.toggleAll }}</button>
+      <button @click="$emit('refresh-cache')" class="btn" :disabled="cacheRefreshing">{{ cacheRefreshing ? '⏳' : '🔄' }} {{ trans.refreshCache }}</button>
     </div>
 
     <div class="table-wrapper">
@@ -186,6 +188,7 @@ const props = defineProps({
   activeTab: { type: String, default: 'servers' },
   selectedApiIndex: { type: Number, default: 0 },
   latestAgentVersion: { type: String, default: '' },
+  cacheRefreshing: { type: Boolean, default: false },
   copiedServerId: { type: [String, Number], default: null },
   copiedNoteServerId: { type: [String, Number], default: null },
   copiedSpecKey: { type: String, default: null }
@@ -195,7 +198,7 @@ const newServerName = defineModel('newServerName', { type: String, default: '' }
 const newServerGroup = defineModel('newServerGroup', { type: String, default: '' })
 
 const emit = defineEmits([
-  'add-server', 'batch-edit', 'batch-delete', 'toggle-select-all', 'select-all',
+  'add-server', 'auto-discovery-cmd', 'batch-edit', 'batch-delete', 'toggle-select-all', 'refresh-cache', 'select-all',
   'drag-start', 'drop', 'toggle-server', 'copy-note',
   'copy-spec', 'copy-cmd', 'edit', 'delete'
 ])

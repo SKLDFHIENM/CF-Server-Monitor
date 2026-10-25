@@ -94,7 +94,7 @@ src/
 - 构建产物只有 `index.html` + `assets/` 两个东西；静态资源放 `assets/` 并用相对路径引用。
 - 旗帜用 `/flags/<code>.svg`、OS 图标用 `/os-icons/<filename>`（默认皮肤静态文件）。
 - 站点标题、背景图、自定义 head/脚本、深浅色（`preferred_theme`）、语言（`default_language`）由后台外观设置和 `/api/config` 控制，主题不得写死。
-- 页面底部必须展示 `Powered by CF-Server-Monitor` 并链接到 `https://github.com/huilang-me/CF-Server-Monitor/`，建议附带 `/api/config` 返回的 `version`。
+- 页面底部必须展示 `Powered by CF Server Monitor` 并链接到 `https://github.com/huilang-me/CF-Server-Monitor/`，建议附带 `/api/config` 返回的 `version`作为该链接的 title 提示属性展示。
 - 资源加载失败要让错误暴露出来，禁止静默跳转到其他页面。
 - 跨域部署时提醒用户：每个 Worker 需配置 `CORS_ALLOWED_ORIGINS` 环境变量（纯 origin、逗号分隔）。
 

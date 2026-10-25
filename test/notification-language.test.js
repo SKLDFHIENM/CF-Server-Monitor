@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { buildResourceAlertNotificationPayloads, evaluateTrafficAlert } from '../src/services/notification.js';
 import { clearSiteSettingsCache, normalizeNotificationLanguage } from '../src/utils/settings.js';
+import { getNotificationMessages } from '../src/services/notificationMessages.js';
+import { NOTIFICATION_LANGUAGE_CODES } from '../src/shared/languages.js';
 
 const netInAlert = [{
   server: { name: 'web-1' },
@@ -10,8 +12,38 @@ const netInAlert = [{
 
 test('notification language defaults to Chinese for missing or unknown values', () => {
   assert.equal(normalizeNotificationLanguage(undefined), 'zh');
-  assert.equal(normalizeNotificationLanguage('fr'), 'zh');
+  assert.equal(normalizeNotificationLanguage('ko'), 'zh');
   assert.equal(normalizeNotificationLanguage(' ES '), 'es');
+});
+
+test('notification language accepts every registered code and keeps its canonical casing', () => {
+  for (const code of NOTIFICATION_LANGUAGE_CODES) {
+    assert.equal(normalizeNotificationLanguage(code), code);
+    assert.equal(normalizeNotificationLanguage(code.toLowerCase()), code);
+  }
+  assert.equal(normalizeNotificationLanguage('zh-tw'), 'zh-TW');
+});
+
+test('every notification language has a complete message set', () => {
+  const eventKeys = ['notification', 'offline', 'recovered', 'resourceAlert', 'resourceRecovered', 'trafficAlert', 'expiring', 'renewed', 'test'];
+  for (const code of NOTIFICATION_LANGUAGE_CODES) {
+    const messages = getNotificationMessages({ notification_language: code });
+    assert.ok(messages, `missing messages for ${code}`);
+    for (const key of eventKeys) {
+      assert.equal(typeof messages.events[key], 'string', `${code}.events.${key}`);
+      assert.ok(messages.events[key].length > 0, `${code}.events.${key} is empty`);
+    }
+    for (const key of ['netIn', 'netOut', 'netTotal']) {
+      assert.ok(messages.metrics[key].length > 0, `${code}.metrics.${key} is empty`);
+    }
+    for (const key of ['invalidTime', 'noReport', 'testMessage']) {
+      assert.ok(messages[key].length > 0, `${code}.${key} is empty`);
+    }
+    assert.match(messages.lastReport('10:00'), /10:00/);
+    assert.match(messages.renewedUntil('2026-01-01'), /2026-01-01/);
+    assert.match(messages.daysLeft(3), /3/);
+    assert.match(messages.trafficUsed({ usedGb: 90, limitGb: 100, percent: 90, threshold: 80 }), /90/);
+  }
 });
 
 test('resource alert payloads keep Chinese text when no language is configured', () => {

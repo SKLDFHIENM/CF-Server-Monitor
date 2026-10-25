@@ -745,9 +745,16 @@ export async function getLatestMetricsForAllServers(db) {
 }
 
 // 从"完整指标"缓存中抽取每台服务器的最新上报时间戳（完整行是轻量结果的超集）
-function extractTimestampsFromMetricsCache(cache) {
+function extractTimestampsFromMetricsCache(cache, servers = null) {
   const map = new Map();
   if (!cache) return map;
+  if (servers) {
+    for (const server of servers) {
+      const metrics = cache.get(server.id);
+      if (metrics) map.set(server.id, metrics.timestamp);
+    }
+    return map;
+  }
   for (const [id, metrics] of cache) {
     if (metrics) map.set(id, metrics.timestamp);
   }
@@ -760,24 +767,25 @@ function extractTimestampsFromMetricsCache(cache) {
  * 命中"完整指标"缓存时直接复用；未命中才轻量查询，且不写回共享缓存，避免用残缺行污染它。
  * 每台服务器用 rowid 范围在主键索引上定位最新一行，每批最多 LATEST_QUERY_CHUNK_SIZE 台，
  * 通过 db.batch() 合并成一次 D1 往返（注意：D1 的 compound SELECT 项数上限极低，不能用 UNION ALL）。
+ * 可传入已筛选的 servers，复用调用方列表并只读取这些节点（包括缓存回退）。
  *
  * @returns {Promise<Map|null>} 成功返回 Map<serverId, timestamp>（可能为空 Map）；
  *   查询失败且无可回退缓存时返回 null，调用方应跳过本次检测，避免误判为全部离线。
  */
-export async function getLatestTimestampsForAllServers(db) {
+export async function getLatestTimestampsForAllServers(db, { servers = null } = {}) {
   const now = Date.now();
   const cacheInfo = getLatestMetricsCache();
   if (cacheInfo.cache && now - cacheInfo.time < cacheInfo.ttl) {
-    return extractTimestampsFromMetricsCache(cacheInfo.cache);
+    return extractTimestampsFromMetricsCache(cacheInfo.cache, servers);
   }
 
   const collected = new Map();
   try {
-    const servers = await getAllServers(db);
-    if (servers.length === 0) return collected;
+    const targetServers = servers ?? await getAllServers(db);
+    if (targetServers.length === 0) return collected;
 
     const items = [];
-    for (const server of servers) {
+    for (const server of targetServers) {
       try {
         // 传入 server 对象时 getServerHistoryInfo 不会触发额外查询
         const historyInfo = await getServerHistoryInfo(db, server.id, server);
@@ -810,6 +818,6 @@ export async function getLatestTimestampsForAllServers(db) {
     console.error('获取所有服务器最新时间戳失败:', e);
     // 查询失败时回退到（可能已过期的）完整缓存；无缓存则返回 null 让调用方跳过本次检测，
     // 避免把查询失败误判为全部服务器离线而误发告警
-    return cacheInfo.cache ? extractTimestampsFromMetricsCache(cacheInfo.cache) : null;
+    return cacheInfo.cache ? extractTimestampsFromMetricsCache(cacheInfo.cache, servers) : null;
   }
 }

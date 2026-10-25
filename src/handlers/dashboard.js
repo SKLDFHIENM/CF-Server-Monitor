@@ -283,6 +283,10 @@ export async function handleServersAPI(request, env, sys) {
       custom_cu_name: sys.custom_cu_name || '联通',
       custom_cm_name: sys.custom_cm_name || '移动',
       custom_bd_name: sys.custom_bd_name || 'BGP',
+      node_1_name: sys.node_1_name || 'Node 1',
+      node_2_name: sys.node_2_name || 'Node 2',
+      node_3_name: sys.node_3_name || 'Node 3',
+      node_4_name: sys.node_4_name || 'Node 4',
       display_mode: sys.display_mode || 'bar',
       latency_window: {
         points: DASHBOARD_LATENCY_WINDOW_POINTS,

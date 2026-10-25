@@ -29,6 +29,8 @@
     
     --bg-card: rgba(21, 27, 38, 0.6);
     --bg-hover: rgba(26, 34, 48, 0.6);
+    --bg-card-solid: #151b26;
+    --bg-hover-solid: #1a2230;
 
     /* Border Colors */
     --border-color: #1e2a3a;
@@ -235,40 +237,69 @@ body::before {
     gap: 12px;
 }
 
-.lang-toggle {
-    display: flex;
-    gap: 2px;
-    background: var(--bg-card);
-    border: 1px solid var(--border-color);
-    border-radius: 4px;
-    padding: 3px;
-}
-
-.lang-btn {
+.lang-select-wrapper {
+    position: relative;
     display: flex;
     align-items: center;
-    justify-content: center;
-    min-width: 32px;
-    height: 26px;
-    padding: 0 8px;
-    border: none;
-    background: transparent;
-    cursor: pointer;
-    border-radius: 3px;
-    font-weight: 600;
+}
+
+.lang-select {
+    appearance: none;
+    -webkit-appearance: none;
+    width: auto;
+    min-width: 96px;
+    height: 34px;
+    padding: 0 22px 0 27px;
+    background: var(--bg-card-solid);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
     color: var(--text-secondary);
     font-family: var(--terminal-font);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1;
+    cursor: pointer;
     transition: all 0.2s;
 }
 
-.lang-btn:hover {
-    background: var(--bg-hover);
+.lang-select:hover:not(:disabled) {
+    background: var(--bg-hover-solid);
+    border-color: var(--border-active);
     color: var(--text-primary);
 }
 
-.lang-btn.active {
-    background: var(--accent-cyan);
-    color: var(--color-inherit);
+.lang-select:focus {
+    outline: none;
+    border-color: var(--accent-cyan);
+    color: var(--text-primary);
+}
+
+.lang-select:disabled {
+    opacity: 0.6;
+    cursor: wait;
+}
+
+.lang-select option {
+    background: var(--bg-card-solid);
+    color: var(--text-primary);
+}
+
+.lang-select-icon {
+    position: absolute;
+    left: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    pointer-events: none;
+    color: var(--text-secondary);
+}
+
+.lang-select-chevron {
+    position: absolute;
+    right: 7px;
+    top: 50%;
+    transform: translateY(-50%);
+    pointer-events: none;
+    color: var(--text-secondary);
 }
 
 .theme-toggle-wrapper {
@@ -2244,6 +2275,31 @@ body::before {
     border: 1px solid var(--border-color);
     border-radius: 4px;
     padding: 16px;
+}
+
+/* 设置页保存栏：吸附在视口底部，长表单滚动时也能随时保存 */
+.settings-save-bar {
+    position: sticky;
+    bottom: 12px;
+    z-index: 30;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 12px;
+    margin-top: 20px;
+    padding: 12px 16px;
+    background: color-mix(in srgb, var(--bg-card) 78%, var(--bg-primary));
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    box-shadow: 0 -6px 22px rgba(0, 0, 0, 0.32);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+}
+
+.settings-save-hint {
+    margin-right: auto;
+    color: var(--text-muted);
+    font-size: 12px;
 }
 
 .ping-node-grid {
@@ -4227,6 +4283,8 @@ body.mikus-theme {
     --bg-secondary: rgba(42, 33, 49, 0.78);
     --bg-card: rgba(51, 39, 58, 0.76);
     --bg-hover: rgba(67, 48, 72, 0.88);
+    --bg-card-solid: #332738;
+    --bg-hover-solid: #433048;
     --border-color: rgba(255, 183, 197, 0.24);
     --border-active: rgba(255, 138, 166, 0.48);
     --text-primary: #f8eef5;
@@ -4263,6 +4321,8 @@ body.light.mikus-theme {
     --bg-secondary: rgba(255, 255, 255, 0.74);
     --bg-card: rgba(255, 255, 255, 0.82);
     --bg-hover: rgba(250, 248, 252, 0.94);
+    --bg-card-solid: #ffffff;
+    --bg-hover-solid: #faf8fc;
     --border-color: #e8e0f0;
     --border-active: #d9c9e7;
     --text-primary: #2d1b3d;
@@ -4414,7 +4474,6 @@ body.mikus-theme .server-card-network-panel,
 body.mikus-theme .tabs,
 body.mikus-theme .view-toggle,
 body.mikus-theme .time-selector,
-body.mikus-theme .lang-toggle,
 body.mikus-theme .theme-toggle,
 body.mikus-theme .user-menu-btn,
 body.mikus-theme .admin-link-header,
@@ -4454,7 +4513,6 @@ body.mikus-theme .toggle-btn.active,
 body.mikus-theme .filter-tag.active,
 body.mikus-theme .time-btn.active,
 body.mikus-theme .theme-btn.active,
-body.mikus-theme .lang-btn.active,
 body.mikus-theme .login-btn {
     background: var(--mikus-accent);
     border-color: var(--mikus-accent);
@@ -4989,8 +5047,27 @@ body.mikus-theme .mikus-stats-mascot-img {
         display: none;
     }
 
-    .lang-toggle, .theme-toggle{
+    .theme-toggle{
         padding: 0;
+    }
+
+    .lang-select{
+        width: auto;
+        min-width: 84px;
+        height: 28px;
+        padding-left: 21px;
+        padding-right: 18px;
+        font-size: 11px;
+    }
+
+    .lang-select-icon{
+        left: 5px;
+        width: 12px;
+        height: 12px;
+    }
+
+    .lang-select-chevron{
+        right: 5px;
     }
 
     .terminal-header-controls{
@@ -5080,6 +5157,19 @@ body.mikus-theme .mikus-stats-mascot-img {
 
     .settings-section {
         margin-bottom: 12px;
+    }
+
+    .settings-save-bar {
+        bottom: 8px;
+        padding: 10px 12px;
+    }
+
+    .settings-save-hint {
+        display: none;
+    }
+
+    .settings-save-bar .btn {
+        width: 100%;
     }
 
     .settings-grid .form-row {

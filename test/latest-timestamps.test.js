@@ -200,3 +200,54 @@ test('getLatestTimestampsForAllServers does not pollute the shared metrics cache
     await miniflare.dispose();
   }
 });
+
+test('selected servers reuse caller metadata and only query their history partitions', async () => {
+  const miniflare = createMiniflare();
+  try {
+    const db = await miniflare.getD1Database('DB');
+    await createTables(db);
+    clearAllCaches();
+    const start = Date.UTC(2026, 0, 1);
+    const serverRows = [];
+    const metricRows = [];
+    const expected = new Map();
+    for (let index = 1; index <= 35; index++) seedServer(serverRows, metricRows, expected, index, start);
+    await db.prepare(`INSERT INTO metrics_history (id, server_id, timestamp) VALUES ${metricRows.join(',')}`).run();
+    // 故意不写 servers 表：调用方提供的节点元数据足以完成查询。
+    const servers = [1, 30, 35].map(index => ({ id: `server-${index}`, history_partition_id: index, timestamp: start }));
+    let statements = 0;
+    const selectedDb = {
+      prepare(sql) {
+        assert.ok(!sql.includes('FROM servers'));
+        return db.prepare(sql);
+      },
+      batch(batch) { statements += batch.length; return db.batch(batch); }
+    };
+    const result = await getLatestTimestampsForAllServers(selectedDb, { servers });
+    assert.deepEqual(result, new Map(servers.map(server => [server.id, expected.get(server.id)])));
+    assert.equal(statements, 3);
+    assert.equal(getLatestMetricsCache().cache, null);
+  } finally {
+    clearAllCaches();
+    await miniflare.dispose();
+  }
+});
+
+test('selected timestamp cache hits and failure fallback stay scoped to requested servers', async t => {
+  clearAllCaches();
+  t.after(clearAllCaches);
+  t.mock.timers.enable({ apis: ['Date'], now: Date.UTC(2026, 0, 1) });
+  const cache = new Map([['server-1', { timestamp: 111 }], ['server-2', { timestamp: 222 }]]);
+  setLatestMetricsCache(cache);
+  const servers = [{ id: 'server-2', history_partition_id: 2, timestamp: 0 }];
+  assert.deepEqual(await getLatestTimestampsForAllServers({}, { servers }), new Map([['server-2', 222]]));
+  assert.deepEqual(await getLatestTimestampsForAllServers({}, { servers: [] }), new Map());
+
+  t.mock.timers.tick(31_000);
+  t.mock.method(console, 'error', () => {});
+  const failedDb = { prepare() { throw new Error('simulated D1 failure'); } };
+  assert.deepEqual(await getLatestTimestampsForAllServers(failedDb, { servers }), new Map([['server-2', 222]]));
+  assert.equal(getLatestMetricsCache().cache, cache);
+  clearAllCaches();
+  assert.deepEqual(await getLatestTimestampsForAllServers({}, { servers: [] }), new Map());
+});

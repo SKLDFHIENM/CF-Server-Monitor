@@ -4,10 +4,16 @@ import {
   SITE_SETTINGS_CACHE_TTL_MS
 } from './config.js';
 import { normalizePct } from './traffic.js';
+import {
+  AUTO_LANGUAGE,
+  DEFAULT_NOTIFICATION_LANGUAGE,
+  normalizeLanguagePreference,
+  normalizeNotificationLanguagePreference
+} from '../shared/languages.js';
 
 export const APPEARANCE_FIELDS = ['site_title', 'custom_bg', 'custom_bg_mobile', 'favicon', 'custom_head', 'custom_script', 'csp_static', 'csp_api', 'display_mode', 'preferred_theme', 'default_language', 'theme_options'];
 
-export const SITE_FIELDS = ['is_public', 'show_price', 'show_expire', 'show_tf', 'show_three_net_details', 'wss_report_enabled', 'wss_report_hours', 'frontend_ws_timeout_minutes', 'long_history_points', 'tg_notify', 'tg_bot_token', 'tg_chat_id', 'notification_timezone', 'notification_language', 'expire_notification_time', 'notification_webhook_enabled', 'notification_webhook_url', 'notification_webhook_method', 'notification_webhook_format', 'notification_webhook_headers', 'notification_webhook_body', 'notification_template', 'turnstile_enabled', 'turnstile_login_enabled', 'turnstile_site_key', 'turnstile_secret_key', 'jwt_secret', 'username', 'password', 'cloudflare_account_id', 'cloudflare_token', 'custom_ct', 'custom_cu', 'custom_cm', 'custom_bd', 'node_1', 'node_2', 'node_3', 'node_4', 'custom_ct_name', 'custom_cu_name', 'custom_cm_name', 'custom_bd_name', 'node_1_name', 'node_2_name', 'node_3_name', 'node_4_name', 'expire_reminder', 'resource_alert_rules', 'traffic_alert_threshold', 'theme_url', 'servers_optimized'];
+export const SITE_FIELDS = ['auto_discovery', 'is_public', 'show_price', 'show_expire', 'show_tf', 'show_three_net_details', 'wss_report_enabled', 'wss_report_hours', 'frontend_ws_timeout_minutes', 'long_history_points', 'tg_notify', 'tg_bot_token', 'tg_chat_id', 'notification_timezone', 'notification_language', 'expire_notification_time', 'notification_webhook_enabled', 'notification_webhook_url', 'notification_webhook_method', 'notification_webhook_format', 'notification_webhook_headers', 'notification_webhook_body', 'notification_template', 'turnstile_enabled', 'turnstile_login_enabled', 'turnstile_site_key', 'turnstile_secret_key', 'jwt_secret', 'username', 'password', 'cloudflare_account_id', 'cloudflare_token', 'custom_ct', 'custom_cu', 'custom_cm', 'custom_bd', 'node_1', 'node_2', 'node_3', 'node_4', 'custom_ct_name', 'custom_cu_name', 'custom_cm_name', 'custom_bd_name', 'node_1_name', 'node_2_name', 'node_3_name', 'node_4_name', 'expire_reminder', 'resource_alert_rules', 'traffic_alert_threshold', 'theme_url', 'servers_optimized'];
 
 export const TG_NOTIFY_MINUTES_MIN = 2;
 export const TG_NOTIFY_MINUTES_MAX = 30;
@@ -17,8 +23,7 @@ export const LONG_HISTORY_POINT_OPTIONS = [60, 120, 180, 240];
 export const DEFAULT_LONG_HISTORY_POINTS = 120;
 export const FRONTEND_WS_TIMEOUT_MINUTES_MAX = 1440;
 export const DEFAULT_NOTIFICATION_TIMEZONE = 'UTC';
-export const NOTIFICATION_LANGUAGES = ['zh', 'en', 'es'];
-export const DEFAULT_NOTIFICATION_LANGUAGE = 'zh';
+export { DEFAULT_NOTIFICATION_LANGUAGE };
 export const DEFAULT_EXPIRE_NOTIFICATION_TIME = '12';
 export const ALL_WSS_REPORT_HOURS = Object.freeze(Array.from({ length: 24 }, (_, hour) => hour));
 export const RESOURCE_ALERT_WINDOW_MIN = 5;
@@ -73,6 +78,7 @@ const defaults = {
   preferred_theme: 'auto',
   default_language: 'auto',
   theme_options: {},
+  auto_discovery: 'false',
   is_public: 'true',
   show_price: 'true',
   show_expire: 'true',
@@ -472,15 +478,12 @@ export function normalizePreferredTheme(value, fallback = 'auto') {
   return fallback === 'dark' || fallback === 'light' ? fallback : 'auto';
 }
 
-export function normalizeDefaultLanguage(value, fallback = 'auto') {
-  const language = String(value || '').trim().toLowerCase();
-  if (language === 'zh' || language === 'en' || language === 'es' || language === 'auto') return language;
-  return fallback === 'zh' || fallback === 'en' || fallback === 'es' ? fallback : 'auto';
+export function normalizeDefaultLanguage(value, fallback = AUTO_LANGUAGE) {
+  return normalizeLanguagePreference(value, fallback);
 }
 
 export function normalizeNotificationLanguage(value) {
-  const language = String(value || '').trim().toLowerCase();
-  return NOTIFICATION_LANGUAGES.includes(language) ? language : DEFAULT_NOTIFICATION_LANGUAGE;
+  return normalizeNotificationLanguagePreference(value);
 }
 
 export function normalizeBooleanSetting(value, fallback = 'false') {
@@ -661,6 +664,7 @@ export async function loadSiteSettings(db, options = {}) {
     result.expire_reminder = normalizeExpireReminder(result.expire_reminder);
     result.long_history_points = normalizeLongHistoryPoints(result.long_history_points);
     result.resource_alert_rules = normalizeResourceAlertRules(result.resource_alert_rules);
+    result.auto_discovery = normalizeBooleanSetting(result.auto_discovery);
     result.show_three_net_details = normalizeBooleanSetting(result.show_three_net_details, defaults.show_three_net_details);
     result.wss_report_enabled = normalizeBooleanSetting(result.wss_report_enabled, defaults.wss_report_enabled);
     result.wss_report_hours = normalizeWssReportHours(result.wss_report_hours);
@@ -677,6 +681,12 @@ export async function loadSiteSettings(db, options = {}) {
     result.traffic_alert_threshold = normalizeTrafficAlertThreshold(result.traffic_alert_threshold);
   } catch (e) {
     console.error('加载站点设置失败:', e);
+    if (cachedSiteSettings) {
+      // 保留上次配置，避免 D1 抖动把通知等设置重置为默认值。
+      // 沿用 120s 刷新间隔，防止缓存过期后每次请求都重试 D1；强制刷新仍可提前恢复。
+      siteSettingsCacheExpiry = now + SITE_SETTINGS_CACHE_TTL_MS;
+      return cachedSiteSettings;
+    }
   }
 
   cachedSiteSettings = result;
@@ -790,6 +800,7 @@ export async function saveSiteOptions(db, updates) {
   siteOptions.expire_reminder = normalizeExpireReminder(siteOptions.expire_reminder);
   siteOptions.long_history_points = normalizeLongHistoryPoints(siteOptions.long_history_points);
   siteOptions.resource_alert_rules = normalizeResourceAlertRules(siteOptions.resource_alert_rules);
+  siteOptions.auto_discovery = normalizeBooleanSetting(siteOptions.auto_discovery);
   siteOptions.show_three_net_details = normalizeBooleanSetting(siteOptions.show_three_net_details, defaults.show_three_net_details);
   siteOptions.wss_report_enabled = normalizeBooleanSetting(siteOptions.wss_report_enabled, defaults.wss_report_enabled);
   siteOptions.wss_report_hours = normalizeWssReportHours(siteOptions.wss_report_hours);

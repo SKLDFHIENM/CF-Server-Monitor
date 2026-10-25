@@ -10,7 +10,7 @@
   <a href="README-en.md">English</a>
 </p>
 
-[![Workers](https://img.shields.io/badge/Workers-2.8.7%20Beta2-f38020?style=flat-square&logo=cloudflare&logoColor=white)](version.json)
+[![Workers](https://img.shields.io/badge/Workers-2.8.7%20Beta4-f38020?style=flat-square&logo=cloudflare&logoColor=white)](version.json)
 [![GitHub Stars](https://img.shields.io/github/stars/huilang-me/CF-Server-Monitor?style=flat-square&logo=github)](https://github.com/huilang-me/CF-Server-Monitor/stargazers)
 [![GitHub Forks](https://img.shields.io/github/forks/huilang-me/CF-Server-Monitor?style=flat-square&logo=github)](https://github.com/huilang-me/CF-Server-Monitor/forks)
 [![License](https://img.shields.io/badge/License-MIT-16a34a?style=flat-square)](#许可证)
@@ -66,7 +66,7 @@ CF-Server-Monitor 是一个部署在 Cloudflare Workers 上的服务器监控系
 | 历史数据      | 7 天历史图表、长时段采样、实时网速、月流量统计与校正                                                      |
 | 网络质量      | 电信、联通、移动、BGP 节点延迟与丢包率追踪；三网详情开启时首页从 D1 最近 2 小时抽样最多 20 个真实点并缓存 5 分钟 |
 | 多视图前台     | 条形图、环形图、表格、地图视图，支持桌面端和移动端                                                        |
-| 管理后台      | 服务器增删改查、拖拽排序、隐藏服务器、导入导出、批量删除、数据库维护                                               |
+| 管理后台      | 服务器增删改查、拖拽排序、隐藏服务器、导入导出、批量删除、刷新服务器列表缓存、数据库维护                                               |
 | 多系统 Agent | 主流 Linux、Alpine Linux、OpenWrt、群晖 DSM、飞牛 fnOS、FreeBSD、macOS、Windows，支持 Docker 镜像部署；默认 Go 版本，保留 Shell/PowerShell 版本 |
 | 实时推送      | Durable Objects + WebSocket，Agent 上报后前端即时刷新                                      |
 | 告警通知      | 离线告警、恢复通知、到期提醒、资源负载告警                                                            |
@@ -97,7 +97,7 @@ flowchart LR
 
 近期变化：
 
-- `2.8.7`：优化定时任务逻辑，降低CPU负载，避免超出免费额度限制；`/update` 增加 512KB 请求体上限，超限直接返回 413；服务器被删除后，其 Agent 的 WSS 连接会在 2 分钟内自动断开；WSS 上报增加帧大小校验，D1 抖动时不再中断已认证会话；批量样本只保留最新 300 条。
+- `2.8.7`：优化定时任务逻辑，降低CPU负载，避免超出免费额度限制；`/update` 增加 512KB 请求体上限，超限直接返回 413；服务器被删除后，其 Agent 的 WSS 连接会在 2 分钟内自动断开；WSS 上报增加帧大小校验，D1 抖动时不再中断已认证会话；批量样本只保留最新 300 条。新增服务端自动发现机制自动绑定服务器ID
 - `2.8.6`：WSS前端订阅采用250毫秒批量上报，新增SMTP通知渠道，新增月度流量阈值告警，移除旧版数据库兼容性，新增Docker安装方式。
 - `2.8.5`：支持自定义 Ping 节点名称；增加ICMP模式；优化WSS响应逻辑；API接口优化；原皮前端优化；新增4个ping节点。
 - `2.8.4`：新增 Agent WSS 上报和 WSS 开启时段，提升实时数据推送及时性，并允许非目标时段自动改用 POST 降低 Do 时长消耗；该能力要求 Agent 升级到 `v1.0.10+`。新增账户Do用量展示，优化无前端订阅时的 Do 实时广播请求，降低空闲额度消耗。通知设置新增自定义 Webhook 渠道, 新增前端wss超时配置。
@@ -192,7 +192,27 @@ https://你的 Worker 域名/admin#/admin
 4. 点击复制按钮，选择目标系统和 Agent 版本。
 5. 在目标服务器上执行复制出的安装命令。
 
-建议优先使用后台生成的命令，因为它会自动带上服务器 ID、Worker URL、Secret、上报间隔、网络质量节点和网卡等参数。
+如果服务器数量较多，也可以在「设置 → 站点设置」中开启 **自动发现**：安装 Agent 时不传 `-id`，首次上报时服务端会自动创建服务器，名称取 `-name` 参数，未传则使用请求的连接来源 IP（`CF-Connecting-IP`）。若已存在同名服务器则不会新建也不会复用，服务端直接拒绝本次上报（返回 404），Agent 输出提示后直接退出。新建的服务器最多延迟约 2 分钟出现在首页；建号失败、或服务端未开启自动发现（空 `id` 上报只收到普通 404）时，同样只输出一条提示后退出，不重试、不发送通知，也不留下任何标记文件。该开关默认关闭。
+
+自动发现开关保存后，后台「站点设置 → 自动发现」旁会出现复制按钮，可直接复制下面这种不传 `-id` 的 Linux 安装命令。
+
+不传 `-id` 时的安装命令（Linux、OpenWrt、Synology DSM、FreeBSD、macOS）：
+
+```bash
+# 名称取本机公网 IP
+curl -fsSL https://raw.githubusercontent.com/huilang-me/cfsm-agent/main/install.sh | sh -s -- install -secret=SECRET -url=WORKER_URL
+
+# 指定名称
+curl -fsSL https://raw.githubusercontent.com/huilang-me/cfsm-agent/main/install.sh | sh -s -- install -secret=SECRET -url=WORKER_URL -name=hk-1
+```
+
+Windows（管理员 PowerShell），同样去掉 `-id`：
+
+```powershell
+$script = "$env:TEMP\install-cf-probe.ps1"
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/huilang-me/cfsm-agent/main/install.ps1" -OutFile $script -UseBasicParsing
+PowerShell -ExecutionPolicy Bypass -File $script install -secret=SECRET -url=WORKER_URL -name=hk-1
+```
 
 ## Agent 参数与安全建议
 
@@ -204,7 +224,8 @@ V2.8.3 起默认使用独立项目 [cfsm-agent](https://github.com/huilang-me/cf
 
 | 参数                            | 说明                           | 默认值  |
 | ----------------------------- | ---------------------------- | ---- |
-| `-id`                         | 服务器唯一 ID                     | 必填   |
+| `-id`                         | 服务器唯一 ID                     | 必填（开启自动发现时可省略） |
+| `-name`                       | 自动建号时的服务器名称                   | 连接来源 IP（`CF-Connecting-IP`） |
 | `-secret`                     | Agent 上报密钥，需要等于 `API_SECRET` | 必填   |
 | `-url`                        | Worker 上报地址                  | 必填   |
 | `-collect_interval`           | 本机采集间隔；`0` 表示不额外采样           | `0`  |
@@ -277,7 +298,7 @@ npm run build:github-page
 
 | 分类            | 主要内容                                  |
 | ------------- | ------------------------------------- |
-| 站点设置          | 标题、背景、favicon、默认展示模式、默认外观、默认语言、三网详情、公开访问策略 |
+| 站点设置          | 标题、背景、favicon、默认展示模式、默认外观、默认语言、三网详情、公开访问策略、自动发现（可复制免 ID 的 Linux 安装命令） |
 | 服务器参数         | HTTP/WSS 上报间隔、采集间隔、Ping 节点、网卡、月流量、价格、到期时间、自动续费 |
 | 安全设置          | 管理员账号密码、JWT Secret、Turnstile          |
 | 通知设置          | 离线告警、到期提醒、资源负载告警、测试通知                 |

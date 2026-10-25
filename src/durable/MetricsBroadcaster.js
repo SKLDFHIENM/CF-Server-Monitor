@@ -45,6 +45,7 @@ import {
   AGENT_WSS_FRONTEND_BATCH_WINDOW_MS,
   LATEST_REPORT_CACHE_MAX_SERVERS,
   LATEST_REPORT_CACHE_TTL_MS,
+  RESOURCE_ALERT_COMPACT_RESULT_FORMAT,
   UPDATE_MAX_BATCH_SAMPLES,
   UPDATE_MAX_REQUEST_BYTES
 } from '../utils/config.js';
@@ -1729,7 +1730,9 @@ export class MetricsBroadcaster {
 
       this._activateResourceAlertCache();
       await this._ensureResourceAlertSnapshotLoaded();
-      const result = await this._evaluateResourceAlertRules(normalizedRules.rules);
+      const result = await this._evaluateResourceAlertRules(normalizedRules.rules, {
+        resultFormat: body?.resultFormat
+      });
 
       return new Response(JSON.stringify(result), {
         headers: {
@@ -1936,7 +1939,8 @@ export class MetricsBroadcaster {
     }
   }
 
-  _evaluateResourceAlertRule(rule = {}, now = Date.now()) {
+  _evaluateResourceAlertRule(rule = {}, now = Date.now(), options = {}) {
+    const compact = options.resultFormat === RESOURCE_ALERT_COMPACT_RESULT_FORMAT;
     const windowMinutesNumber = Number(rule.windowMinutes);
     const windowMinutes = Number.isInteger(windowMinutesNumber)
       ? Math.max(5, Math.min(10, windowMinutesNumber))
@@ -1991,31 +1995,39 @@ export class MetricsBroadcaster {
           ? triggerValue > threshold
           : metricSamples.every(item => item.value > threshold);
 
-        const metricEvaluation = {
-          metric,
-          mode,
-          threshold,
-          triggerValue,
-          triggered: isTriggered,
-          ...summary
-        };
-        evaluationMetrics.push(metricEvaluation);
-        if (isTriggered) {
-          metrics.push(metricEvaluation);
+        if (compact && !isTriggered) {
+          // compact-v1：规则级定义只返回一次，节点仅返回 triggerValue/current/min/max/avg。
+          evaluationMetrics.push([triggerValue, summary.current, summary.min, summary.max, summary.avg]);
+        } else {
+          const metricEvaluation = {
+            metric,
+            mode,
+            threshold,
+            triggerValue,
+            triggered: isTriggered,
+            ...summary
+          };
+          evaluationMetrics.push(metricEvaluation);
+          if (isTriggered) metrics.push(metricEvaluation);
         }
       }
 
       if (!canEvaluateAllMetrics) continue;
-      evaluatedServerIds.push(serverId);
-      evaluations.push({
-        serverId,
-        mode,
-        windowMinutes,
-        sampleCount: samples.length,
-        minSampleRatio: RESOURCE_ALERT_MIN_SAMPLE_RATIO,
-        latestTs: latestSample.ts,
-        metrics: evaluationMetrics
-      });
+      if (compact) {
+        // 告警节点保留完整 alerts 即可；只有未触发节点才可能需要恢复判断。
+        if (metrics.length === 0) evaluations.push({ serverId, metrics: evaluationMetrics });
+      } else {
+        evaluatedServerIds.push(serverId);
+        evaluations.push({
+          serverId,
+          mode,
+          windowMinutes,
+          sampleCount: samples.length,
+          minSampleRatio: RESOURCE_ALERT_MIN_SAMPLE_RATIO,
+          latestTs: latestSample.ts,
+          metrics: evaluationMetrics
+        });
+      }
 
       if (metrics.length > 0) {
         alerts.push({
@@ -2030,16 +2042,27 @@ export class MetricsBroadcaster {
       }
     }
 
+    if (compact && (alerts.length > 0 || evaluations.length > 0)) {
+      return {
+        ruleId: rule.ruleId,
+        format: RESOURCE_ALERT_COMPACT_RESULT_FORMAT,
+        metricDefinitions: evaluations.length > 0
+          ? metricThresholds.map(([metric, threshold]) => ({ metric, mode, threshold }))
+          : [],
+        alerts,
+        evaluations
+      };
+    }
     return { ruleId: rule.ruleId, now, mode, windowMinutes, alerts, evaluatedServerIds, evaluations };
   }
 
-  async _evaluateResourceAlertRules(rules = []) {
+  async _evaluateResourceAlertRules(rules = [], options = {}) {
     const now = Date.now();
     this._pruneResourceAlertWindows(now);
     const results = [];
 
     for (const rule of rules) {
-      results.push(this._evaluateResourceAlertRule(rule, now));
+      results.push(this._evaluateResourceAlertRule(rule, now, options));
     }
 
     await this._persistResourceAlertSnapshotIfNeeded(now);

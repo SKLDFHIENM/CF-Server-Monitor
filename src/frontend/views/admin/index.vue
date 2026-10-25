@@ -114,13 +114,16 @@
           :active-tab="activeTab"
           :selected-api-index="selectedApiIndex"
           :latest-agent-version="latestAgentVersion"
+          :cache-refreshing="cacheRefreshing"
           :copied-server-id="copiedServerId"
           :copied-note-server-id="copiedNoteServerId"
           :copied-spec-key="copiedSpecKey"
           @add-server="addServer"
+          @auto-discovery-cmd="openAutoDiscoveryModal"
           @batch-edit="openBatchEditModal"
           @batch-delete="batchDelete"
           @toggle-select-all="toggleSelectAll"
+          @refresh-cache="refreshServersCache"
           @select-all="handleSelectAll"
           @drag-start="handleDragStart"
           @drop="handleDrop"
@@ -285,6 +288,27 @@
         @update:install-gh-proxy="installGhProxy = $event"
         @update:install-version="installVersion = $event"
         @open-edit-from-copy="openEditModalFromCopy"
+      />
+
+      <AutoDiscoveryCommandModal
+        :trans="trans"
+        :show="showAutoDiscoveryModal"
+        :target-os="autoDiscoveryTargetOs"
+        :install-mode="autoDiscoveryInstallMode"
+        :name="autoDiscoveryName"
+        :version="autoDiscoveryVersion"
+        :auto-update="autoDiscoveryAutoUpdate"
+        :gh-proxy="autoDiscoveryGhProxy"
+        :install-command="getAutoDiscoveryInstallCommand()"
+        :copied="autoDiscoveryCopied"
+        @close="closeAutoDiscoveryModal"
+        @copy-cmd="copyAutoDiscoveryCmd"
+        @update:target-os="autoDiscoveryTargetOs = $event"
+        @update:install-mode="autoDiscoveryInstallMode = $event"
+        @update:name="autoDiscoveryName = $event"
+        @update:version="autoDiscoveryVersion = $event"
+        @update:auto-update="autoDiscoveryAutoUpdate = $event"
+        @update:gh-proxy="autoDiscoveryGhProxy = $event"
       />
 
       <div id="dbModal" class="modal-overlay" :class="{ active: showDbModal }">
@@ -586,10 +610,11 @@ import EditServerModal from './components/EditServerModal.vue'
 import BatchEditServersModal from './components/BatchEditServersModal.vue'
 import DeleteServerModal from './components/DeleteServerModal.vue'
 import CopyCommandModal from './components/CopyCommandModal.vue'
+import AutoDiscoveryCommandModal from './components/AutoDiscoveryCommandModal.vue'
 import { adminApi, login, logout as apiLogout, upgradeDatabase, clearHistory, fetchConfig } from '../../utils/api'
 import { hasMultipleApiBases, getApiBases } from '../../utils/config.js'
 import { copyTextToClipboard } from '../../utils/clipboard.js'
-import { t, useTranslation } from '../../utils/i18n'
+import { normalizeLanguagePreference, normalizeNotificationLanguagePreference, t, useTranslation } from '../../utils/i18n'
 import { PING_NODE_FIELDS, validatePingNode } from '../../utils/pingNode.js'
 import { normalizeDisplayMode, resolveDisplayMode } from '../../utils/displayMode.js'
 import { applyMikusThemeOptions } from '../../utils/themeOptions.js'
@@ -817,15 +842,9 @@ const normalizePreferredThemeSetting = (value) => {
   return ['dark', 'light', 'auto'].includes(theme) ? theme : 'auto'
 }
 
-const normalizeDefaultLanguageSetting = (value) => {
-  const language = String(value || '').trim().toLowerCase()
-  return ['zh', 'en', 'es', 'auto'].includes(language) ? language : 'auto'
-}
+const normalizeDefaultLanguageSetting = (value) => normalizeLanguagePreference(value)
 
-const normalizeNotificationLanguageSetting = (value) => {
-  const language = String(value || '').trim().toLowerCase()
-  return ['zh', 'en', 'es'].includes(language) ? language : 'zh'
-}
+const normalizeNotificationLanguageSetting = (value) => normalizeNotificationLanguagePreference(value)
 
 const formatThemeOptions = (value) => {
   const normalized = value === undefined || value === null ? {} : value
@@ -933,6 +952,7 @@ const settings = ref({
   preferred_theme: 'auto',
   default_language: 'auto',
   theme_options: '{}',
+  auto_discovery: false,
   is_public: false,
   show_price: true,
   show_expire: true,
@@ -982,6 +1002,8 @@ const settings = ref({
   csp_api: ''
 })
 const apiSecret = ref('')
+const cacheRefreshing = ref(false)
+const savedAutoDiscovery = ref(false)
 const changeAdminPassword = ref(false)
 
 const clearAdminPasswordInputs = () => {
@@ -1142,6 +1164,14 @@ const rxCorrection = ref('')
 const txCorrection = ref('')
 const autoUpdate = ref(false)
 const copiedCmd = ref(false)
+const showAutoDiscoveryModal = ref(false)
+const autoDiscoveryTargetOs = ref('linux')
+const autoDiscoveryInstallMode = ref('current-user')
+const autoDiscoveryName = ref('')
+const autoDiscoveryVersion = ref('')
+const autoDiscoveryAutoUpdate = ref(false)
+const autoDiscoveryGhProxy = ref('')
+const autoDiscoveryCopied = ref(false)
 
 const isWssReportEnabled = computed(() => settings.value.wss_report_enabled === true)
 const getEffectiveConnectionMode = (value) => {
@@ -1375,6 +1405,7 @@ const loadSettings = async () => {
         preferred_theme: normalizePreferredThemeSetting(settingsData.preferred_theme),
         default_language: normalizeDefaultLanguageSetting(settingsData.default_language),
         theme_options: formatThemeOptions(settingsData.theme_options),
+        auto_discovery: settingsData.auto_discovery === 'true' || settingsData.auto_discovery === true,
         is_public: settingsData.is_public === 'true',
         show_price: settingsData.show_price === 'true',
         show_expire: settingsData.show_expire === 'true',
@@ -1428,6 +1459,8 @@ const loadSettings = async () => {
       applyMikusThemeOptions(settingsData.theme_options)
       changeAdminPassword.value = !settings.value.password_configured || !String(settings.value.username || '').trim()
       apiSecret.value = data.api_secret || ''
+      // 只有已保存到服务端的自动发现开关才提供复制安装命令，避免复制出当前并未生效的命令
+      savedAutoDiscovery.value = settings.value.auto_discovery
     }
   } catch (e) {
     console.error('[ERROR] Load settings failed:', e)
@@ -1573,6 +1606,7 @@ const saveSettings = async () => {
       appearance_options: {
         theme_options: themeOptionsResult.value
       },
+      auto_discovery: settings.value.auto_discovery ? 'true' : 'false',
       is_public: settings.value.is_public ? 'true' : 'false',
       show_price: settings.value.show_price ? 'true' : 'false',
       show_expire: settings.value.show_expire ? 'true' : 'false',
@@ -1648,9 +1682,9 @@ const saveSettings = async () => {
 }
 
 
-const loadServers = async () => {
+const loadServers = async (options = {}) => {
   try {
-    const result = await adminApiForSite({ action: 'list' })
+    const result = await adminApiForSite(options.refresh ? { action: 'list', refresh: true } : { action: 'list' })
     if (!result.error) {
       const data = result.data
       servers.value = data.servers || []
@@ -1659,8 +1693,26 @@ const loadServers = async () => {
       const serverGroups = [...new Set(servers.value.map(s => s.server_group || trans.value.default))]
       groups.value = serverGroups
     }
+    return result
   } catch (e) {
     console.error('[ERROR] Load servers failed:', e)
+    return { error: e.message }
+  }
+}
+
+// 清除 Workers 端服务器列表缓存并就地重新拉取（list 带 refresh 时服务端先清缓存再读 D1）
+const refreshServersCache = async () => {
+  if (cacheRefreshing.value) return
+  cacheRefreshing.value = true
+  try {
+    const result = await loadServers({ refresh: true })
+    if (result?.error) {
+      alertMessage.value = getMessage(result.error) || result.error || trans.value.operationFailed
+      return
+    }
+    alertMessage.value = trans.value.cacheCleared
+  } finally {
+    cacheRefreshing.value = false
   }
 }
 
@@ -1714,12 +1766,12 @@ const getUninstallCommand = () => {
   if (isGo) {
     if (deleteTargetOs.value === 'windows') {
       const ghUrl = buildGhRawUrl(proxy, '/huilang-me/cfsm-agent/main/install.ps1')
-      const proxyParam = proxy ? ` ${quotePowerShellArg(`--install-ghproxy=${proxy}`)}` : ''
+      const proxyParam = proxy ? ` --install-ghproxy=${quotePowerShellArg(proxy)}` : ''
       return `$script = "$env:TEMP\\install-cf-probe.ps1"; Invoke-WebRequest -Uri ${quotePowerShellArg(ghUrl)} -OutFile $script -UseBasicParsing; PowerShell -ExecutionPolicy Bypass -File $script uninstall${proxyParam}`
     }
     const sudoPrefix = deleteTargetOs.value === 'mac' ? 'sudo ' : ''
     const ghUrl = buildGhRawUrl(proxy, '/huilang-me/cfsm-agent/main/install.sh')
-    const proxyParam = proxy ? ` ${quotePosixShellArg(`--install-ghproxy=${proxy}`)}` : ''
+    const proxyParam = proxy ? ` --install-ghproxy=${quotePosixShellArg(proxy)}` : ''
     const uninstallCommand = `curl -fsSL ${quotePosixShellArg(ghUrl)} | ${sudoPrefix}sh -s -- uninstall${proxyParam}`
     if (deleteTargetOs.value === 'linux' && deleteInstallMode.value === 'cfsm-user') {
       return buildUninstallAsCfsmCommand(uninstallCommand)
@@ -1857,11 +1909,11 @@ const getCustomInstallCommand = () => {
     const params = [
       'install'
     ]
-    if (proxy) params.push(quotePowerShellArg(`--install-ghproxy=${proxy}`))
-    if (version) params.push(quotePowerShellArg(`--install-version=${version}`))
+    if (proxy) params.push(`--install-ghproxy=${quotePowerShellArg(proxy)}`)
+    if (version) params.push(`--install-version=${quotePowerShellArg(version)}`)
     params.push(
       `-id='${copyServerId.value}'`,
-      `-secret='${apiSecret.value}'`,
+      `-secret=${quotePowerShellArg(apiSecret.value)}`,
       `-url='${HOST}/update'`,
       `-auto_update='${autoUpdateFlag}'`
     )
@@ -1879,11 +1931,11 @@ const getCustomInstallCommand = () => {
     ].join('\n')
   }
   const params = ['install']
-  if (proxy) params.push(quotePosixShellArg(`--install-ghproxy=${proxy}`))
-  if (version) params.push(quotePosixShellArg(`--install-version=${version}`))
+  if (proxy) params.push(`--install-ghproxy=${quotePosixShellArg(proxy)}`)
+  if (version) params.push(`--install-version=${quotePosixShellArg(version)}`)
   params.push(
     `-id=${copyServerId.value}`,
-    `-secret='${apiSecret.value}'`,
+    `-secret=${quotePosixShellArg(apiSecret.value)}`,
     `-url=${HOST}/update`,
     `-auto_update=${autoUpdateFlag}`
   )
@@ -1892,6 +1944,84 @@ const getCustomInstallCommand = () => {
   if (!isDedicatedUserInstall) return installCommand
 
   return buildInstallAsCfsmCommand(installCommand, trans.value.nonRootInstallRunStep)
+}
+
+// 自动发现模式下安装命令不带 -id：Agent 首次上报时由服务端自动创建服务器。
+// name 留空时服务端回退到请求来源 IP；安装用户、代理、版本、名称与自动更新仅影响本次生成的命令。
+const buildAutoDiscoveryCommand = ({ targetOs: os = 'linux', installMode: mode = 'current-user', ghProxy = '', name = '', version = '', autoUpdate = false } = {}) => {
+  const HOST = selectedApiBase.value
+  const proxy = String(ghProxy || '').trim()
+  const agentVersion = String(version || '').trim()
+  const autoUpdateFlag = autoUpdate ? 1 : 0
+  const serverName = String(name || '')
+    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .trim()
+    .slice(0, 100)
+
+  if (os === 'windows') {
+    const params = ['install']
+    if (proxy) params.push(`--install-ghproxy=${quotePowerShellArg(proxy)}`)
+    if (agentVersion) params.push(`--install-version=${quotePowerShellArg(agentVersion)}`)
+    params.push(
+      `-secret=${quotePowerShellArg(apiSecret.value)}`,
+      `-url='${HOST}/update'`,
+      `-auto_update='${autoUpdateFlag}'`
+    )
+    if (serverName) params.push(`-name=${quotePowerShellArg(serverName)}`)
+    const ghUrl = buildGhRawUrl(proxy, '/huilang-me/cfsm-agent/main/install.ps1')
+    return `$script = "$env:TEMP\\install-cf-probe.ps1"; Invoke-WebRequest -Uri ${quotePowerShellArg(ghUrl)} -OutFile $script -UseBasicParsing; PowerShell -ExecutionPolicy Bypass -File $script ${params.join(' ')}`
+  }
+
+  const params = ['install']
+  if (proxy) params.push(`--install-ghproxy=${quotePosixShellArg(proxy)}`)
+  if (agentVersion) params.push(`--install-version=${quotePosixShellArg(agentVersion)}`)
+  params.push(
+    `-secret=${quotePosixShellArg(apiSecret.value)}`,
+    `-url=${HOST}/update`,
+    `-auto_update=${autoUpdateFlag}`
+  )
+  if (serverName) params.push(`-name=${quotePosixShellArg(serverName)}`)
+  const ghUrl = buildGhRawUrl(proxy, '/huilang-me/cfsm-agent/main/install.sh')
+  const installCommand = `curl -fsSL ${quotePosixShellArg(ghUrl)} | sh -s -- ${params.join(' ')}`
+  if (os !== 'linux' || mode !== 'cfsm-user') return installCommand
+
+  return buildInstallAsCfsmCommand(installCommand, trans.value.nonRootInstallRunStep)
+}
+
+const getAutoDiscoveryInstallCommand = () => buildAutoDiscoveryCommand({
+  targetOs: autoDiscoveryTargetOs.value,
+  installMode: autoDiscoveryInstallMode.value,
+  ghProxy: autoDiscoveryGhProxy.value,
+  name: autoDiscoveryName.value,
+  version: autoDiscoveryVersion.value,
+  autoUpdate: autoDiscoveryAutoUpdate.value
+})
+
+const openAutoDiscoveryModal = () => {
+  if (!savedAutoDiscovery.value) {
+    alertMessage.value = trans.value.autoAddDisabledTip
+    return
+  }
+
+  autoDiscoveryCopied.value = false
+  showAutoDiscoveryModal.value = true
+}
+
+const closeAutoDiscoveryModal = () => {
+  showAutoDiscoveryModal.value = false
+}
+
+const copyAutoDiscoveryCmd = async () => {
+  const copied = await copyTextToClipboard(getAutoDiscoveryInstallCommand())
+  if (!copied) {
+    alertMessage.value = trans.value.httpsRequired
+    return
+  }
+
+  autoDiscoveryCopied.value = true
+  setTimeout(() => {
+    autoDiscoveryCopied.value = false
+  }, 1500)
 }
 
 const copyCustomCmd = async () => {

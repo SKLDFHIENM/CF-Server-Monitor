@@ -9,6 +9,7 @@
  */
 
 import { clearAppearanceSettingsCache, clearSiteSettingsCache, debug } from './settings.js';
+import { SERVER_DETAIL_CACHE_MAX_ENTRIES, METRICS_HISTORY_CACHE_MAX_ENTRIES } from './config.js';
 
 const SERVERS_LIST_TTL = 120 * 1000;
 let serversListCache = null;
@@ -20,6 +21,15 @@ let latestAllCacheTime = 0;
 const metricsHistoryCache = new Map();
 
 const serverDetailCache = new Map();
+
+// 超限时按写入顺序淘汰，避免额外定时任务。
+function setCacheEntry(cache, key, entry, maxEntries) {
+  cache.delete(key);
+  cache.set(key, entry);
+  while (cache.size > maxEntries) {
+    cache.delete(cache.keys().next().value);
+  }
+}
 
 export function getCacheDuration(hours) {
   if (hours >= 48) {
@@ -100,7 +110,7 @@ export async function getServerDetail(db, id, includeHidden = false) {
       return { ...server };
     }
     
-    serverDetailCache.delete(id);
+    // 过期详情保留为 D1 异常时的兜底值，直到成功刷新、主动清理或容量淘汰。
   }
   
   let server;
@@ -116,7 +126,10 @@ export async function getServerDetail(db, id, includeHidden = false) {
   }
 
   if (!degraded) {
-    serverDetailCache.set(id, { data: server, time: now });
+    setCacheEntry(serverDetailCache, id, {
+      data: server,
+      time: now
+    }, SERVER_DETAIL_CACHE_MAX_ENTRIES);
     debug('服务器详情缓存更新');
   }
   
@@ -129,11 +142,6 @@ export async function getServerDetail(db, id, includeHidden = false) {
   }
   
   return { ...server };
-}
-
-export async function checkServerExists(db, id) {
-  const server = await getServerDetail(db, id, true);
-  return !!server;
 }
 
 /**
@@ -162,20 +170,25 @@ function getCacheKey(serverId, hours, columns, samplePoints = null) {
 
 export function getMetricsHistoryCache(serverId, hours, columns, samplePoints = null) {
   const key = getCacheKey(serverId, hours, columns, samplePoints);
-  return metricsHistoryCache.get(key);
+  const cached = metricsHistoryCache.get(key);
+  if (cached && Date.now() >= cached.expiresAt) {
+    metricsHistoryCache.delete(key);
+    return undefined;
+  }
+  return cached;
 }
 
 export function setMetricsHistoryCache(serverId, hours, columns, data, samplePoints = null) {
   const key = getCacheKey(serverId, hours, columns, samplePoints);
-  metricsHistoryCache.set(key, { data, timestamp: Date.now() });
-}
-
-export function clearMetricsHistoryCache(serverId) {
-  for (const key of metricsHistoryCache.keys()) {
-    if (key.startsWith(`${serverId}:`)) {
-      metricsHistoryCache.delete(key);
-    }
+  const now = Date.now();
+  for (const [cachedKey, cached] of metricsHistoryCache) {
+    if (now >= cached.expiresAt) metricsHistoryCache.delete(cachedKey);
   }
+  setCacheEntry(metricsHistoryCache, key, {
+    data,
+    timestamp: now,
+    expiresAt: now + getCacheDuration(hours)
+  }, METRICS_HISTORY_CACHE_MAX_ENTRIES);
 }
 
 export function clearAllCaches() {

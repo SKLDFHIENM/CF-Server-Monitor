@@ -407,7 +407,7 @@ import { isAdminLoggedIn } from '../utils/http'
 import { getTrafficUsageBytes } from '../composables/useServerCardData'
 import { getPublicAssetUrl } from '../utils/config.js'
 import Chart from 'chart.js/auto'
-import { t, currentLang, useTranslation } from '../utils/i18n'
+import { t, useTranslation } from '../utils/i18n'
 import { CHART, HISTORY } from '../utils/constants'
 import { formatDateTime, normalizeTimestamp as normalizeMetricTimestamp } from '../utils/time.js'
 import useTheme from '../composables/useTheme'
@@ -455,9 +455,7 @@ const ChartExpandButton = {
   },
   emits: ['toggle'],
   setup(props, { emit }) {
-    const getLabel = () => props.expanded
-      ? (currentLang.value === 'en' ? 'Collapse chart' : '收起图表')
-      : (currentLang.value === 'en' ? 'Expand chart' : '放大图表')
+    const getLabel = () => props.expanded ? trans.value.collapseChart : trans.value.expandChart
 
     return () => h('button', {
       type: 'button',
@@ -1574,10 +1572,16 @@ const getReplaySampleData = (sample) => {
 
 const buildLiveStatusData = (event) => {
   const receiveTs = Date.now()
+  // last_updated 必须使用上报方的时间戳，不能用浏览器接收时间，
+  // 否则离线重放缓存上报时会把「最后更新」显示成当前时间。
+  const reportTs = normalizeMetricTimestamp(
+    event?.data?.last_updated ?? event?.data?.timestamp ?? event?.ts,
+    receiveTs
+  )
   return {
     ...event.data,
-    sample_timestamp: event.ts,
-    last_updated: receiveTs,
+    sample_timestamp: reportTs,
+    last_updated: reportTs,
     timestamp: receiveTs
   }
 }

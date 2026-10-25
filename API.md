@@ -401,6 +401,16 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
   （`Content-Type: application/x-www-form-urlencoded; charset=utf-8`）
 - ~~动态配置包含 `traffic_calc_type`、`traffic_limit`、`auto_update` 等全部探针运行参数。~~ **2026-07-26 修订，2026-07-31 更新，2026-08-15 更新，2026-08-18 更新，2026-08-19 更新，2026-08-28 更新**：schema `3` 不包含 `connection_mode`；schema `4` 增加 `connection_mode`，并保持原有序列化与 MD5 计算不变；schema `5` 在 WSS 全局开启且服务器 `connection_mode=auto` 时追加 `wss_report_interval`（`1-5` 秒，默认 `2`），并将 `collect_interval=0` 或大于 WSS 间隔的值规范为 WSS 间隔；schema `6` 追加 `ping_mode`（`tcp|icmp`，默认 `tcp`），参与配置 MD5 并下发给 Agent。待应用的 `rx_correction`、`tx_correction` 会追加到响应体，但不参与配置 MD5；启用自动更新且版本不一致时追加 `update=1`。
 - 探针应用流量修正后，可在下一次 `POST /update` 顶层回传 `rx_correction` / `tx_correction`。值匹配时后端清空待修正字段并直接返回纯文本 `OK`，本次请求不要求 `metrics`。
+- **自动发现（2026-10-21 新增）**：`site_options.auto_discovery === 'true'` 时，若请求体 `id` 为空，服务端会在本次请求内创建服务器并继续正常入库：
+  - 名称优先级：请求体 `name`（≤100 字符）→ 请求头 `CF-Connecting-IP`；都取不到时放弃创建。`CF-Connecting-IP` 为 `"0"`、`"0.0.0.0"` 等占位值时视为无效。`metrics.ip_v4` / `metrics.ip_v6` 不参与命名。
+  - 去重：已存在同名服务器时不新建，也不写入本次上报（直接返回 404），响应头标记 `reused` 且不回传 `X-CFSM-Server-Id`；Agent 收到 `reused` 后应输出提示并退出，避免把本机数据写进同名服务器。
+  - 新建的 `id` 通过响应头 `X-CFSM-Server-Id` 回传，Agent 需落盘并在后续请求中使用。
+  - 结果标记通过响应头 `X-CFSM-Auto-Discovery` 回传：`created`、`reused`、`failed:<code>`（`no_name` / `db_error`）。
+  - 创建失败只写服务端日志，返回下方原有 404，不重试、不发送通知；Agent 收到 `failed` 后会在本次运行内停止自动发现与上报（空 `id` 的上报必然是 404），重启 Agent 服务后才会重新尝试一次。
+  - 建号前先校验本次上报能否入库（`samples`/`metrics` 为空、`rx_correction`/`tx_correction` 非法时直接返回 400），校验不通过不会建号，避免留下永远不会被写入的空壳服务器。
+  - 该分支只在 `id` 为空时生效；`id` 非空但查不到仍返回 404，已删除的服务器不会被自动重建。
+  - 未开启自动发现时，空 `id` 的上报仍是原有 404，且不带任何自动发现响应头；Agent 应据此提示用户开启自动发现或改用 `-id` 安装后退出，不要静默重试。
+  - `wss://.../update` 不参与自动发现：未绑定的 Agent 必须先通过 POST 建号，再按下发的 `connection_mode` 切换。
 - 失败：
   ```json
   { "error": "Invalid secret", "code": 401 }
@@ -1187,8 +1197,10 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled` 或
 **Request**
 
 ```json
-{ "action": "list" }
+{ "action": "list", "refresh": false }
 ```
+
+- `refresh`（可选，默认 `false`）：为 `true` 时先清空本 isolate 的服务器列表/详情缓存再查询 D1，用于管理后台「刷新缓存」按钮，保证返回的是最新数据。
 
 **Response 200**
 
@@ -1352,7 +1364,7 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled` 或
 **字段分类**：
 
 - `APPEARANCE_FIELDS`（写入 `appearance_options` JSON）：`site_title`、`custom_bg`、`custom_bg_mobile`、`favicon`、`custom_head`、`custom_script`、`csp_static`、`csp_api`、`display_mode`、`preferred_theme`、`default_language`、`theme_options`
-- `SITE_FIELDS`（写入 `site_options` JSON）：`is_public`、`show_price`、`show_expire`、`show_tf`、`wss_report_enabled`、`wss_report_hours`、`frontend_ws_timeout_minutes`、`long_history_points`、通知、Turnstile、账号、Cloudflare、Ping 节点及其显示名称（`custom_ct_name`、`custom_cu_name`、`custom_cm_name`、`custom_bd_name`）、`expire_reminder`、`notification_timezone`、`expire_notification_time`、`theme_url`、历史优化字段等站点级配置。`wss_report_hours` 是允许 Agent WSS 上报的 UTC 小时数组（`0-23`）；缺失时默认全天，空数组表示所有时段均关闭
+- `SITE_FIELDS`（写入 `site_options` JSON）：`auto_discovery`（站点级自动发现开关，`'true'|'false'`，默认 `'false'`，详见 [§1.1](#11-post-update---指标上报agent-入口)）、`is_public`、`show_price`、`show_expire`、`show_tf`、`wss_report_enabled`、`wss_report_hours`、`frontend_ws_timeout_minutes`、`long_history_points`、通知、Turnstile、账号、Cloudflare、Ping 节点及其显示名称（`custom_ct_name`、`custom_cu_name`、`custom_cm_name`、`custom_bd_name`）、`expire_reminder`、`notification_timezone`、`expire_notification_time`、`theme_url`、历史优化字段等站点级配置。`wss_report_hours` 是允许 Agent WSS 上报的 UTC 小时数组（`0-23`）；缺失时默认全天，空数组表示所有时段均关闭
 - 任何未列出的字段会被忽略
 
 **特殊处理**：
@@ -1891,6 +1903,7 @@ UUID 缺失或格式非法时返回 `400 { "error": "invalidServerId", "code": 4
   default_language: 'auto' | 'zh' | 'en',
   theme_options: Record<string, unknown>,
   theme_url: string,             // 第三方主题商店 URL；为空使用内置主题
+  auto_discovery: 'true' | 'false', // 默认 'false'；开启后空 id 的 POST /update 会自动建号
   is_public: 'true' | 'false',
   show_price: 'true' | 'false',
   show_expire: 'true' | 'false',
@@ -2186,4 +2199,4 @@ curl -X POST https://status.example.com/admin/api \
 
 ***
 
-> 文档同步：与源码 `src/index.js`、`src/middleware/auth.js`、`src/handlers/{admin,dashboard,frontend,theme,update}.js`、`src/durable/MetricsBroadcaster.js`、`src/utils/{settings,errors,cors,csp,cache,metrics,common,serverBilling,version,latestReportCache,agentConfig}.js`、`src/database/{schema,updateDatabase}.js` 一一对应；后续修改任一文件时，请同步更新本文件。
+> 文档同步：与源码 `src/index.js`、`src/middleware/auth.js`、`src/handlers/{admin,dashboard,frontend,theme,update}.js`、`src/durable/MetricsBroadcaster.js`、`src/utils/{settings,errors,cors,csp,cache,metrics,common,serverBilling,version,latestReportCache,agentConfig,autoDiscovery}.js`、`src/database/{schema,updateDatabase}.js` 一一对应；后续修改任一文件时，请同步更新本文件。

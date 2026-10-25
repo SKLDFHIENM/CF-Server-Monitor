@@ -30,6 +30,7 @@ import {
   NOTIFICATION_RETRY_DELAY_MS,
   RESOURCE_ALERT_EVALUATE_RULE_BATCH_SIZE,
   RESOURCE_ALERT_EVALUATE_SERVER_BATCH_SIZE,
+  RESOURCE_ALERT_COMPACT_RESULT_FORMAT,
   RESOURCE_ALERT_NOTIFICATION_SOFT_LIMIT
 } from '../utils/config.js';
 import { getNotificationMessages } from './notificationMessages.js';
@@ -220,6 +221,30 @@ function canRecoverResourceAlert(evaluation) {
   });
 }
 
+// compact-v1 的正常节点仅携带数值摘要；只在需要判断恢复时还原完整指标。
+function expandResourceAlertEvaluation(evaluation) {
+  if (!evaluation?.metricDefinitions) return evaluation;
+  const definitions = evaluation.metricDefinitions;
+  const values = evaluation.metrics;
+  if (!Array.isArray(definitions) || !Array.isArray(values) || definitions.length !== values.length) return null;
+  const metrics = [];
+  for (let index = 0; index < definitions.length; index++) {
+    const summary = values[index];
+    // 顺序：triggerValue, current, min, max, avg。异常响应不能被当成恢复。
+    if (!Array.isArray(summary) || summary.length !== 5 || !summary.every(Number.isFinite)) return null;
+    metrics.push({
+      ...definitions[index],
+      triggerValue: summary[0],
+      triggered: false,
+      current: summary[1],
+      min: summary[2],
+      max: summary[3],
+      avg: summary[4]
+    });
+  }
+  return { serverId: evaluation.serverId, metrics };
+}
+
 function getResourceAlertRuleIntervalMs(rule) {
   const minutes = Number(rule?.intervalMinutes);
   const normalizedMinutes = Number.isFinite(minutes) && minutes > 0 ? minutes : 5;
@@ -372,6 +397,7 @@ async function evaluateResourceAlertRules(stub, ruleRequests) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          resultFormat: RESOURCE_ALERT_COMPACT_RESULT_FORMAT,
           rules: batch.map(({ rule, serverIds }) => ({
             ruleId: rule.id,
             serverIds,
@@ -396,17 +422,27 @@ async function evaluateResourceAlertRules(stub, ruleRequests) {
           evaluatedServerIds: [],
           evaluations: []
         };
-        existing.alerts.push(...(Array.isArray(item.alerts) ? item.alerts : []));
-        existing.evaluatedServerIds.push(...(
-          Array.isArray(item.evaluatedServerIds)
-            ? item.evaluatedServerIds.map(id => String(id)).filter(Boolean)
-            : []
-        ));
-        existing.evaluations.push(...(
-          Array.isArray(item.evaluations)
-            ? item.evaluations.filter(evaluation => evaluation && evaluation.serverId)
-            : []
-        ));
+        const alerts = Array.isArray(item.alerts) ? item.alerts : [];
+        const evaluations = Array.isArray(item.evaluations)
+          ? item.evaluations.filter(evaluation => evaluation && evaluation.serverId)
+          : [];
+        existing.alerts.push(...alerts);
+        if (item.format === RESOURCE_ALERT_COMPACT_RESULT_FORMAT) {
+          // 紧凑响应的 alerts / evaluations 覆盖全部成功评估节点，失败节点仍不参与状态迁移。
+          existing.evaluatedServerIds.push(...alerts.map(alert => String(alert.serverId)));
+          for (const evaluation of evaluations) {
+            evaluation.metricDefinitions = item.metricDefinitions;
+            existing.evaluatedServerIds.push(String(evaluation.serverId));
+          }
+        } else {
+          // 滚动部署时仍接受旧 DO 的完整响应。
+          existing.evaluatedServerIds.push(...(
+            Array.isArray(item.evaluatedServerIds)
+              ? item.evaluatedServerIds.map(id => String(id)).filter(Boolean)
+              : []
+          ));
+        }
+        existing.evaluations.push(...evaluations);
         resultMap.set(ruleId, existing);
       }
     } catch (e) {
@@ -1004,16 +1040,17 @@ export async function sendNotification(settings, msg, notificationContext = {}) 
   }
 }
 
-export async function checkOfflineNodes(db) {
-  const siteSettings = await loadSiteSettings(db);
+export async function checkOfflineNodes(db, options = {}) {
+  const siteSettings = options.siteSettings ?? await loadSiteSettings(db);
   const tgNotifyMinutes = getTgNotifyMinutes(siteSettings.tg_notify);
 
   if (tgNotifyMinutes === 0 || !hasNotificationTarget(siteSettings)) return;
 
   try {
-    const allServers = await getAllServers(db);
-    
-    const latestTimestampsMap = await getLatestTimestampsForAllServers(db);
+    const servers = (await getAllServers(db)).filter(server => server.offline_notify_disabled !== '1');
+    if (servers.length === 0) return;
+
+    const latestTimestampsMap = await getLatestTimestampsForAllServers(db, { servers });
     if (!latestTimestampsMap) {
       // 获取失败时跳过本次检测，避免把所有服务器误判为离线
       debug('[Cron] 获取最新上报时间戳失败，跳过本次离线检测');
@@ -1038,9 +1075,7 @@ export async function checkOfflineNodes(db) {
     const offlineNodes = [];
     const recoveredNodes = [];
 
-    for (const s of allServers) {
-      if (s.offline_notify_disabled === '1') continue;
-
+    for (const s of servers) {
       const hasLatestReport = latestTimestampsMap.has(s.id);
       const lastReportTime = latestTimestampsMap.get(s.id);
 
@@ -1105,7 +1140,7 @@ export async function checkResourceAlerts(env, options = {}) {
   const minute = Number.isFinite(options?.minute) ? options.minute : new Date().getUTCMinutes();
   // 每 2 分钟强制刷新一次设置，其余分钟复用缓存（TTL 120s），降低每分钟的 CPU 开销
   const forceRefresh = minute % 2 === 0;
-  const siteSettings = await loadSiteSettings(db, { forceRefresh });
+  const siteSettings = options.siteSettings ?? await loadSiteSettings(db, { forceRefresh });
   if (!hasNotificationTarget(siteSettings)) return;
 
   const resourceConfig = getResourceAlertConfig(siteSettings);
@@ -1207,7 +1242,6 @@ export async function checkResourceAlerts(env, options = {}) {
     for (const { key, rule, server } of evaluatedRuleServers) {
       const active = activeMap.get(key);
       const alert = active?.alert;
-      const evaluation = evaluationMap.get(key);
       const currentState = alertState[key];
       const currentStatus = currentState
         ? getResourceAlertStateStatus(currentState)
@@ -1247,6 +1281,7 @@ export async function checkResourceAlerts(env, options = {}) {
         }
       } else if (currentState) {
         if (currentStatus === RESOURCE_ALERT_STATE_ACTIVE) {
+          const evaluation = expandResourceAlertEvaluation(evaluationMap.get(key));
           if (!canRecoverResourceAlert(evaluation)) {
             continue;
           }

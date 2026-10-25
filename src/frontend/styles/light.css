@@ -8,6 +8,8 @@ body.light {
   --bg-secondary: rgba(232, 232, 224, 0.6);
   --bg-card: rgba(250, 250, 245, 0.6);
   --bg-hover: rgba(240, 240, 232, 0.6);
+  --bg-card-solid: #fafaf5;
+  --bg-hover-solid: #f0f0e8;
   --border-color: #d4d4c8;
   --border-active: #b8b8a8;
   --text-primary: #2c2c2c;

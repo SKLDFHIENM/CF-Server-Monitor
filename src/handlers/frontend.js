@@ -28,7 +28,7 @@ async function loadFrontendFiles(env) {
 
     if (env.ASSETS) {
       try {
-        const mainFiles = ['dashboard.html', 'style.css'];
+        const mainFiles = ['dashboard.html'];
         for (const filename of mainFiles) {
           try {
             const res = await env.ASSETS.fetch(new Request(`http://static/${filename}`));
@@ -80,9 +80,37 @@ function injectFavicon(html, favicon) {
   const value = String(favicon || '').trim();
   if (!value) return html;
 
-  const withoutExistingIcons = html.replace(/<link\b(?=[^>]*\brel=["'][^"']*(?:shortcut\s+icon|icon)[^"']*["'])[^>]*>\s*/gi, '');
   const safeFavicon = escapeHtml(value);
-  return insertBeforeHeadClose(withoutExistingIcons, `<link rel="icon" href="${safeFavicon}">`);
+  // iOS 添加到主屏幕只认 apple-touch-icon，且不支持 ico/svg，因此复用同一地址（应为 png）。
+  const iconTag = `<link rel="icon" href="${safeFavicon}">`;
+  const appleTouchIconTag = `<link rel="apple-touch-icon" href="${safeFavicon}">`;
+
+  let hasIcon = false;
+  let hasAppleTouchIcon = false;
+
+  // 默认 index.html 自带 icon / apple-touch-icon 标签时就地替换；主题缺失对应标签时再补插到 </head> 前。
+  let result = html.replace(/<link\b[^>]*>/gi, (tag) => {
+    const relMatch = tag.match(/(?:^|\s)rel\s*=\s*["']([^"']*)["']/i);
+    if (!relMatch) return tag;
+
+    const rel = relMatch[1].trim().toLowerCase().replace(/\s+/g, ' ');
+    if (rel === 'icon' || rel === 'shortcut icon') {
+      if (hasIcon) return '';
+      hasIcon = true;
+      return iconTag;
+    }
+    if (rel === 'apple-touch-icon' || rel === 'apple-touch-icon-precomposed') {
+      if (hasAppleTouchIcon) return '';
+      hasAppleTouchIcon = true;
+      return appleTouchIconTag;
+    }
+    return tag;
+  });
+
+  const missing = [];
+  if (!hasIcon) missing.push(iconTag);
+  if (!hasAppleTouchIcon) missing.push(appleTouchIconTag);
+  return missing.length ? insertBeforeHeadClose(result, missing.join('\n')) : result;
 }
 
 function getEnvApiBases(env) {

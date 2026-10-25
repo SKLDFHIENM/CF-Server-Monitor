@@ -1,10 +1,14 @@
 // 当前 Worker 版本：/api/config 返回给前端与主题，用于页脚和升级提示。
-export const CURRENT_VERSION = '2.8.7 Beta2';
+export const CURRENT_VERSION = '2.8.7 Beta4';
 
 // 站点设置默认值与缓存策略。
 export const DEFAULT_SITE_TITLE = 'Cloudflare Server Monitor';
 export const SITE_SETTINGS_CACHE_TTL_MS = 120 * 1000;
 export const JWT_SECRET_MIN_LENGTH = 32;
+
+// 内存缓存容量：历史查询包含整组采样数据，使用更小的条目上限。
+export const SERVER_DETAIL_CACHE_MAX_ENTRIES = 1000;
+export const METRICS_HISTORY_CACHE_MAX_ENTRIES = 200;
 
 // 首页三网延迟/丢包小窗口：影响 /api/servers 的 servers[].ping/loss 抽样，并通过 /api/config 暴露给主题。
 export const DASHBOARD_LATENCY_WINDOW_POINTS = 20;
@@ -41,6 +45,7 @@ export const NOTIFICATION_MAX_RETRIES = 3;
 export const NOTIFICATION_RETRY_DELAY_MS = 1000;
 export const RESOURCE_ALERT_EVALUATE_RULE_BATCH_SIZE = 20;
 export const RESOURCE_ALERT_EVALUATE_SERVER_BATCH_SIZE = 500;
+export const RESOURCE_ALERT_COMPACT_RESULT_FORMAT = 'compact-v1';
 export const RESOURCE_ALERT_NOTIFICATION_SOFT_LIMIT = 3200;
 
 // 主题商店与远程主题资源缓存。

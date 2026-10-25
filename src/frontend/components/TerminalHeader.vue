@@ -7,25 +7,26 @@
     </div>
     <div class="terminal-title">{{ title }}</div>
     <div class="terminal-header-controls">
-      <div class="lang-toggle">
-        <button 
-          class="lang-btn" 
-          :class="{ active: currentLang === 'en' }"
-          @click="setLang('en')"
-          aria-label="English"
-        >EN</button>
-        <button 
-          class="lang-btn" 
-          :class="{ active: currentLang === 'zh' }"
-          @click="setLang('zh')"
-          aria-label="中文"
-        >中</button>
-        <button 
-          class="lang-btn" 
-          :class="{ active: currentLang === 'es' }"
-          @click="setLang('es')"
-          aria-label="Español"
-        >ES</button>
+      <div class="lang-select-wrapper">
+        <svg class="lang-select-icon" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="10"></circle>
+          <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"></path>
+          <path d="M2 12h20"></path>
+        </svg>
+        <select
+          class="lang-select"
+          :value="currentLang"
+          :disabled="switching"
+          :aria-label="t('language')"
+          @change="handleLangSelect"
+        >
+          <option v-for="language in languages" :key="language.code" :value="language.code">
+            {{ language.nativeLabel }}
+          </option>
+        </select>
+        <svg class="lang-select-chevron" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <polyline points="6 9 12 15 18 9"></polyline>
+        </svg>
       </div>
       <div class="theme-toggle-wrapper">
         <div class="theme-toggle">
@@ -60,7 +61,7 @@
 <script setup>
 import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { t, setLanguage, getLanguage } from '../utils/i18n'
+import { LANGUAGES, t, setLanguage, getLanguage } from '../utils/i18n'
 import { useTheme } from '../composables/useTheme'
 import { DEFAULT_SITE_TITLE } from '../utils/constants'
 import { hasConfiguredApiBase } from '../utils/config'
@@ -73,14 +74,22 @@ defineProps({
 })
 
 const { currentTheme, setTheme } = useTheme()
-const currentLang = ref('en')
+const currentLang = ref(getLanguage())
+const languages = LANGUAGES
+const switching = ref(false)
 const route = useRoute()
 const isAdminPage = ref(route.path === '/admin')
 const adminHref = computed(() => hasConfiguredApiBase() ? '/#/admin' : '/admin#/admin')
 
-const setLang = (lang) => {
-  setLanguage(lang)
-  currentLang.value = lang
+const handleLangSelect = async (event) => {
+  const lang = event.target.value
+  if (lang === currentLang.value) return
+  switching.value = true
+  const changed = await setLanguage(lang)
+  switching.value = false
+  if (!changed) {
+    event.target.value = currentLang.value
+  }
 }
 
 const handleLanguageChange = (e) => {
@@ -88,7 +97,6 @@ const handleLanguageChange = (e) => {
 }
 
 onMounted(() => {
-  currentLang.value = getLanguage()
   window.addEventListener('languageChanged', handleLanguageChange)
 })
 

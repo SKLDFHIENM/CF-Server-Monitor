@@ -5,7 +5,7 @@ import { ADMIN_ENTRY_URL, isAdminPath } from './router/adminEntryUrl'
 import './styles/main.css'
 import './styles/light.css'
 import { STORAGE } from './utils/constants'
-import { applyDefaultLanguage, currentLang, resolveLanguagePreference, translations } from './utils/i18n'
+import { applyDefaultLanguage, currentLang, normalizeLanguagePreference, resolveLanguagePreference, translations } from './utils/i18n'
 import { http, DEFAULT_REQUEST_TIMEOUT_MS } from './utils/http'
 import { initConfig, hasMultipleApiBases } from './utils/config'
 import { LAST_AGENT_VERSION, LAST_WORKERS_VERSION, VERSION, normalizeLiveSocketTimeoutMinutes } from './utils/api'
@@ -127,7 +127,7 @@ async function fetchConfig() {
     const siteTitle = data.site_title || ''
     const displayMode = resolveDisplayMode(data)
     const preferredTheme = ['dark', 'light', 'auto'].includes(String(data.preferred_theme || '').toLowerCase()) ? String(data.preferred_theme).toLowerCase() : 'auto'
-    const defaultLanguage = ['zh', 'en', 'es', 'auto'].includes(String(data.default_language || '').toLowerCase()) ? String(data.default_language).toLowerCase() : 'auto'
+    const defaultLanguage = normalizeLanguagePreference(data.default_language)
     const themeOptions = normalizeThemeOptions(data.theme_options)
     const frontendWsTimeoutMinutes = normalizeLiveSocketTimeoutMinutes(data.frontend_ws_timeout_minutes)
 
@@ -326,7 +326,7 @@ async function initApp() {
         site_title: first.data.site_title || '',
         display_mode: resolveDisplayMode(first.data),
         preferred_theme: ['dark', 'light', 'auto'].includes(String(first.data.preferred_theme || '').toLowerCase()) ? String(first.data.preferred_theme).toLowerCase() : 'auto',
-        default_language: ['zh', 'en', 'es', 'auto'].includes(String(first.data.default_language || '').toLowerCase()) ? String(first.data.default_language).toLowerCase() : 'auto',
+        default_language: normalizeLanguagePreference(first.data.default_language),
         frontend_ws_timeout_minutes: normalizeLiveSocketTimeoutMinutes(first.data.frontend_ws_timeout_minutes),
         theme_options: normalizeThemeOptions(first.data.theme_options)
       } : { turnstile_enabled: false, turnstile_login_enabled: false, turnstile_site_key: '', turnstile_api_index: 0, version: '', last_workers_version: '', last_agent_version: '', verified: false, is_public: true, authorization: false, site_title: '', display_mode: 'bar', preferred_theme: 'auto', default_language: 'auto', frontend_ws_timeout_minutes: 0, theme_options: {} }
@@ -346,7 +346,7 @@ async function initApp() {
   }
 
   applyDefaultTheme(config?.preferred_theme)
-  applyDefaultLanguage(config?.default_language)
+  await applyDefaultLanguage(config?.default_language)
   applyStartupThemeOptions(config)
 
   // 仅全局模式需要在启动时验证 Turnstile；登录模式在 Admin 页面的登录表单中验证

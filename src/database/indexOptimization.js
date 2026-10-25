@@ -2,7 +2,6 @@ import { saveSiteOptions, debug, getSettingByKey } from '../utils/settings.js';
 import { getAllServers, clearServersListCache } from '../utils/cache.js';
 
 export const HISTORY_PARTITION_MULTIPLIER = 10000000000000;
-export const HISTORY_AUTO_OPTIMIZED_MIN_ID = HISTORY_PARTITION_MULTIPLIER;
 export const HISTORY_MAX_PARTITION_ID = 900;
 export const HISTORY_MAX_TIME_KEY = 991231235959;
 
