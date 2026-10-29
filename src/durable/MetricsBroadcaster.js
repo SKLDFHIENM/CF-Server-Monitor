@@ -834,7 +834,10 @@ export class MetricsBroadcaster {
       const ack = {
         config_schema: schemaVersion,
         config_md5: descriptor.md5,
-        has_config: md5Changed || hasCorrection
+        has_config: md5Changed || hasCorrection,
+        // 自定义 UA 独立下发：不参与 md5；只有本次 ack 携带配置协商字段时才有该字段，
+        // agent 收到后自行比对，值相同不写盘。
+        ua: descriptor.ua
       };
 
       if (ack.has_config) {

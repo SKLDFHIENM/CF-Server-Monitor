@@ -1,5 +1,5 @@
 import { md5Hash } from './common.js';
-import { isWssReportConfigured } from './settings.js';
+import { isWssReportConfigured, sanitizeUserAgent } from './settings.js';
 
 export const AGENT_CONFIG_SCHEMA_VERSION = 7;
 export const AGENT_CONFIG_LEGACY_SCHEMA_VERSION = 3;
@@ -9,6 +9,8 @@ export const AGENT_CONFIG_PING_MODE_SCHEMA_VERSION = 6;
 export const AGENT_CONFIG_EXTRA_NODES_SCHEMA_VERSION = 7;
 export const AGENT_CONFIG_SCHEMA_HEADER = 'X-Agent-Config-Schema';
 export const AGENT_CONFIG_MD5_HEADER = 'X-Agent-Config-Md5';
+// 自定义 UA 的独立下发通道：只在 POST /update 认证通过后的 2xx 响应上出现，不参与配置 md5。
+export const AGENT_UA_HEADER = 'X-Ua';
 export const MAX_TRAFFIC_CORRECTION_GB = 1000000;
 export const CONNECTION_MODE_AUTO = 'auto';
 export const CONNECTION_MODE_HTTP = 'http';
@@ -387,5 +389,6 @@ export async function describeAgentConfig(server, settings = null, schemaVersion
     };
   }
 
-  return { config, serialized, md5, correction };
+  // ua 不参与 md5/body，只作为独立通道下发（HTTP 响应头 / WSS ack），复用已加载的 settings，不产生额外查询。
+  return { config, serialized, md5, correction, ua: sanitizeUserAgent(settings?.ua) };
 }

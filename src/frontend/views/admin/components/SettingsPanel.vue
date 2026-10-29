@@ -636,16 +636,44 @@
           </div>
         </div>
 
-        <div class="form-group mt-4">
-          <label class="form-label">
-            {{ trans.jwtSecret }}
-            <HelpTooltip :text="trans.jwtSecretTip" />
-          </label>
-          <div class="password-input-wrapper">
-            <input type="text" name="jwt_secret" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other" v-model="settings.jwt_secret" :class="['form-input', { 'secret-input-masked': !passwordVisible.jwtSecret }]" placeholder="••••••••••••••••••••••••••••••••">
-            <button type="button" class="password-toggle" @click="$emit('toggle-password', 'jwtSecret')">
-              {{ passwordVisible.jwtSecret ? '🙈' : '👁️' }}
-            </button>
+        <div class="form-row">
+          <div class="form-group flex-1">
+            <label class="form-label">
+              {{ trans.jwtSecret }}
+              <HelpTooltip :text="trans.jwtSecretTip" />
+            </label>
+            <div class="password-input-wrapper">
+              <input type="text" name="jwt_secret" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other" v-model="settings.jwt_secret" :class="['form-input', { 'secret-input-masked': !passwordVisible.jwtSecret }]" placeholder="••••••••••••••••••••••••••••••••">
+              <button type="button" class="password-toggle" @click="$emit('toggle-password', 'jwtSecret')">
+                {{ passwordVisible.jwtSecret ? '🙈' : '👁️' }}
+              </button>
+            </div>
+          </div>
+
+          <div class="form-group flex-1">
+            <label class="form-label">
+              {{ trans.customUserAgent }}
+              <HelpTooltip :text="trans.customUserAgentTip" />
+            </label>
+            <div class="password-input-wrapper">
+              <input
+                v-model.trim="settings.ua"
+                type="text"
+                name="ua"
+                autocomplete="off"
+                data-lpignore="true"
+                data-1p-ignore="true"
+                data-bwignore="true"
+                data-form-type="other"
+                maxlength="100"
+                :class="['form-input', { 'secret-input-masked': !passwordVisible.ua, 'input-invalid': userAgentInvalid }]"
+                :placeholder="trans.customUserAgentPlaceholder"
+              >
+              <button type="button" class="password-toggle" @click="$emit('toggle-password', 'ua')">
+                {{ passwordVisible.ua ? '🙈' : '👁️' }}
+              </button>
+            </div>
+            <p v-if="userAgentInvalid" class="text-red text-sm mt-1">{{ trans.customUserAgentInvalid }}</p>
           </div>
         </div>
 
@@ -800,7 +828,7 @@
 
     <div class="settings-save-bar">
       <span class="settings-save-hint">{{ trans.saveHint }}</span>
-      <button @click="$emit('save-settings')" class="btn btn-primary btn-lg" :disabled="saving || hasPingNodeErrors">{{ saving ? '⏳' : '💾' }} {{ saving ? trans.saving : trans.saveConfig }}</button>
+      <button @click="$emit('save-settings')" class="btn btn-primary btn-lg" :disabled="saving || hasPingNodeErrors || userAgentInvalid">{{ saving ? '⏳' : '💾' }} {{ saving ? trans.saving : trans.saveConfig }}</button>
     </div>
   </div>
 </template>
@@ -1403,6 +1431,14 @@ const pingNodeErrors = computed(() => Object.fromEntries(
 ))
 
 const hasPingNodeErrors = computed(() => Object.values(pingNodeErrors.value).some(Boolean))
+
+// 与服务端 settings.js / agent config.go 保持一致：只允许在请求头、config.conf、
+// 安装命令引号下都安全的字符；留空由服务端回退默认 cfsm。
+const USER_AGENT_ALLOWED_RE = /^[A-Za-z0-9 _.\-/,:;()+=@#*?~]*$/
+const userAgentInvalid = computed(() => {
+  const value = String(props.settings.ua ?? '').trim()
+  return value.length > 100 || !USER_AGENT_ALLOWED_RE.test(value)
+})
 
 const validatePingNodes = () => !hasPingNodeErrors.value
 

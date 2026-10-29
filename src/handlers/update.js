@@ -19,6 +19,7 @@ import { checkWebSocketAuth } from '../middleware/auth.js';
 import {
   AGENT_CONFIG_MD5_HEADER,
   AGENT_CONFIG_SCHEMA_HEADER,
+  AGENT_UA_HEADER,
   describeAgentConfig,
   isValidTrafficCorrection,
   normalizeAgentConfigSchemaVersion,
@@ -569,17 +570,27 @@ function _ensureBatchFlush(env) {
 // 避免在 handleUpdateCore 的多个 return 分支里重复处理。
 export async function handleUpdate(request, env, ctx) {
   const discovery = { mode: '', code: '', id: '' };
-  const response = await handleUpdateCore(request, env, ctx, discovery);
+  // authState 只在 secret 校验通过后置 ok，ua 复用核心流程里已加载的 settings，不额外查库。
+  const authState = { ok: false, ua: '' };
+  const response = await handleUpdateCore(request, env, ctx, discovery, authState);
 
-  if (!discovery.mode) return response;
+  // 自定义 UA 只下发给已认证且本次请求成功的 agent，401/400/404 一律不带，避免暴露。
+  const attachUa = authState.ok && authState.ua && response.ok;
+  if (!discovery.mode && !attachUa) return response;
 
   const headers = new Headers(response.headers);
-  headers.set(
-    AUTO_DISCOVERY_STATUS_HEADER,
-    discovery.code ? `${discovery.mode}:${discovery.code}` : discovery.mode
-  );
-  if (discovery.id) {
-    headers.set(AUTO_DISCOVERY_SERVER_ID_HEADER, discovery.id);
+  if (attachUa) {
+    headers.set(AGENT_UA_HEADER, authState.ua);
+    headers.set('Cache-Control', 'no-store');
+  }
+  if (discovery.mode) {
+    headers.set(
+      AUTO_DISCOVERY_STATUS_HEADER,
+      discovery.code ? `${discovery.mode}:${discovery.code}` : discovery.mode
+    );
+    if (discovery.id) {
+      headers.set(AUTO_DISCOVERY_SERVER_ID_HEADER, discovery.id);
+    }
   }
 
   return new Response(response.body, {
@@ -589,7 +600,7 @@ export async function handleUpdate(request, env, ctx) {
   });
 }
 
-async function handleUpdateCore(request, env, ctx, discovery) {
+async function handleUpdateCore(request, env, ctx, discovery, authState = null) {
   try {
     // 必须在 request.json() 之前：超大 body 的解析本身就可能耗尽 Worker CPU。
     // 注意这是防呆而非硬上限：chunked 或缺少 Content-Length 的请求会跳过该检查。
@@ -608,6 +619,7 @@ async function handleUpdateCore(request, env, ctx, discovery) {
     if (secret !== env.API_SECRET) {
       return createUnauthorizedResponse('Invalid secret');
     }
+    if (authState) authState.ok = true;
 
     let regionCode = request.cf?.country || request.headers?.get('cf-ipcountry') || '';
     const agentVersion = normalizeAgentVersion(request.headers.get('X-Agent-Version'));
@@ -639,6 +651,7 @@ async function handleUpdateCore(request, env, ctx, discovery) {
         return createBadRequestResponse('Invalid correction');
       }
       const settings = await loadSiteSettings(env.DB);
+      if (authState) authState.ua = settings.ua;
       if (isAutoDiscoveryEnabled(settings)) {
         const result = await discoverServer(env, {
           name: data.name,
@@ -762,6 +775,7 @@ async function handleUpdateCore(request, env, ctx, discovery) {
 
     try {
       const settings = await loadSiteSettings(env.DB);
+      if (authState) authState.ua = settings.ua;
       const wssStateHeaders = buildAgentWssStateHeaders(settings);
       const descriptor = await describeAgentConfig(serverDetail, settings, clientConfigSchema);
       const clientConfigMd5 = (request.headers.get(AGENT_CONFIG_MD5_HEADER) || '').trim().toLowerCase();

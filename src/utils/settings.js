@@ -13,8 +13,10 @@ import {
 
 export const APPEARANCE_FIELDS = ['site_title', 'custom_bg', 'custom_bg_mobile', 'favicon', 'custom_head', 'custom_script', 'csp_static', 'csp_api', 'display_mode', 'preferred_theme', 'default_language', 'theme_options'];
 
-export const SITE_FIELDS = ['auto_discovery', 'is_public', 'show_price', 'show_expire', 'show_tf', 'show_three_net_details', 'wss_report_enabled', 'wss_report_hours', 'frontend_ws_timeout_minutes', 'long_history_points', 'tg_notify', 'tg_bot_token', 'tg_chat_id', 'notification_timezone', 'notification_language', 'expire_notification_time', 'notification_webhook_enabled', 'notification_webhook_url', 'notification_webhook_method', 'notification_webhook_format', 'notification_webhook_headers', 'notification_webhook_body', 'notification_template', 'turnstile_enabled', 'turnstile_login_enabled', 'turnstile_site_key', 'turnstile_secret_key', 'jwt_secret', 'username', 'password', 'cloudflare_account_id', 'cloudflare_token', 'custom_ct', 'custom_cu', 'custom_cm', 'custom_bd', 'node_1', 'node_2', 'node_3', 'node_4', 'custom_ct_name', 'custom_cu_name', 'custom_cm_name', 'custom_bd_name', 'node_1_name', 'node_2_name', 'node_3_name', 'node_4_name', 'expire_reminder', 'resource_alert_rules', 'traffic_alert_threshold', 'theme_url', 'servers_optimized'];
+export const SITE_FIELDS = ['auto_discovery', 'is_public', 'show_price', 'show_expire', 'show_tf', 'show_three_net_details', 'wss_report_enabled', 'wss_report_hours', 'frontend_ws_timeout_minutes', 'long_history_points', 'tg_notify', 'tg_bot_token', 'tg_chat_id', 'notification_timezone', 'notification_language', 'expire_notification_time', 'notification_webhook_enabled', 'notification_webhook_url', 'notification_webhook_method', 'notification_webhook_format', 'notification_webhook_headers', 'notification_webhook_body', 'notification_template', 'turnstile_enabled', 'turnstile_login_enabled', 'turnstile_site_key', 'turnstile_secret_key', 'jwt_secret', 'username', 'password', 'cloudflare_account_id', 'cloudflare_token', 'custom_ct', 'custom_cu', 'custom_cm', 'custom_bd', 'node_1', 'node_2', 'node_3', 'node_4', 'custom_ct_name', 'custom_cu_name', 'custom_cm_name', 'custom_bd_name', 'node_1_name', 'node_2_name', 'node_3_name', 'node_4_name', 'expire_reminder', 'resource_alert_rules', 'traffic_alert_threshold', 'theme_url', 'servers_optimized', 'ua'];
 
+export const DEFAULT_USER_AGENT = 'cfsm';
+export const USER_AGENT_MAX_LENGTH = 100;
 export const TG_NOTIFY_MINUTES_MIN = 2;
 export const TG_NOTIFY_MINUTES_MAX = 30;
 export const TG_NOTIFY_LEGACY_TRUE_MINUTES = 5;
@@ -128,7 +130,8 @@ const defaults = {
   resource_alert_rules: [],
   traffic_alert_threshold: '0',
   theme_url: '',
-  servers_optimized: 'false'
+  servers_optimized: 'false',
+  ua: DEFAULT_USER_AGENT
 };
 
 export function normalizeLongHistoryPoints(value) {
@@ -138,6 +141,28 @@ export function normalizeLongHistoryPoints(value) {
       ? points
       : DEFAULT_LONG_HISTORY_POINTS
   );
+}
+
+// 自定义 UA 会同时出现在四个载体上：上报请求头、/update 响应头、agent 的 config.conf、
+// 安装命令（shell / PowerShell / docker -e）。因此只放行一套在所有载体上都安全的字符：
+// 字母、数字、空格，以及 . _ - / , : ; ( ) + = @ # * ? ~
+// 排除项及其原因：引号和反斜杠破坏 KV 格式；单引号破坏 shell 引号；反引号/$/&/|/<>/^ 破坏
+// shell 语义；% 会被误当转义；! 在部分 shell 有历史展开；非 ASCII 会让 header 写入直接报错。
+const USER_AGENT_ALLOWED_RE = /^[A-Za-z0-9 _.\-/,:;()+=@#*?~]+$/;
+
+export function validateUserAgent(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return { valid: true, value: DEFAULT_USER_AGENT };
+  if (raw.length > USER_AGENT_MAX_LENGTH) return { valid: false, value: DEFAULT_USER_AGENT };
+  if (!USER_AGENT_ALLOWED_RE.test(raw)) {
+    return { valid: false, value: DEFAULT_USER_AGENT };
+  }
+  return { valid: true, value: raw };
+}
+
+export function sanitizeUserAgent(value) {
+  const result = validateUserAgent(value);
+  return result.valid ? result.value : DEFAULT_USER_AGENT;
 }
 
 export function normalizeFrontendWsTimeoutMinutes(value) {
@@ -573,9 +598,14 @@ export function isWssReportEnabled(settings = {}, now = Date.now()) {
   return getWssReportScheduleState(settings, now).active;
 }
 
+// 这些字段是在旧版「逐 key 存 settings」方案废弃之后才加入的，库里不可能存在对应的旧行，
+// 因此缺失时直接回退默认值即可。把它们排除在 hasMissingFields 之外，避免老部署每次
+// 刷新设置缓存都多做一次 SELECT * FROM settings 的兼容查询。
+const LEGACY_FALLBACK_EXEMPT_FIELDS = new Set(['ua']);
+
 function hasMissingFields(source, fields) {
   if (!source || typeof source !== 'object') return true;
-  return fields.some(field => source[field] === undefined);
+  return fields.some(field => source[field] === undefined && !LEGACY_FALLBACK_EXEMPT_FIELDS.has(field));
 }
 
 async function loadLegacySettings(db, fields) {
@@ -679,6 +709,7 @@ export async function loadSiteSettings(db, options = {}) {
     result.notification_language = normalizeNotificationLanguage(result.notification_language);
     result.expire_notification_time = normalizeExpireNotificationTime(result.expire_notification_time);
     result.traffic_alert_threshold = normalizeTrafficAlertThreshold(result.traffic_alert_threshold);
+    result.ua = sanitizeUserAgent(result.ua);
   } catch (e) {
     console.error('加载站点设置失败:', e);
     if (cachedSiteSettings) {
@@ -815,6 +846,7 @@ export async function saveSiteOptions(db, updates) {
   siteOptions.notification_language = normalizeNotificationLanguage(siteOptions.notification_language);
   siteOptions.expire_notification_time = normalizeExpireNotificationTime(siteOptions.expire_notification_time);
   siteOptions.traffic_alert_threshold = normalizeTrafficAlertThreshold(siteOptions.traffic_alert_threshold);
+  siteOptions.ua = sanitizeUserAgent(siteOptions.ua);
   
   await db.prepare(
     'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'

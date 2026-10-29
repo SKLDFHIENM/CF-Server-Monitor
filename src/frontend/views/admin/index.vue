@@ -999,7 +999,8 @@ const settings = ref({
   custom_bd_name: 'BGP',
   theme_url: '',
   csp_static: '',
-  csp_api: ''
+  csp_api: '',
+  ua: 'cfsm'
 })
 const apiSecret = ref('')
 const cacheRefreshing = ref(false)
@@ -1025,7 +1026,7 @@ const toggleAdminPasswordChange = () => {
 }
 
 const { visibility: passwordVisible, toggle: togglePassword } = usePasswordVisibility([
-  'login', 'tgBotToken', 'tgChatId', 'notificationWebhookUrl', 'smtpPassword', 'turnstileSecret', 'cloudflareToken', 'jwtSecret', 'password', 'confirmPassword'
+  'login', 'tgBotToken', 'tgChatId', 'notificationWebhookUrl', 'smtpPassword', 'turnstileSecret', 'cloudflareToken', 'jwtSecret', 'ua', 'password', 'confirmPassword'
 ])
 
 const {
@@ -1454,7 +1455,8 @@ const loadSettings = async () => {
         node_1_name: settingsData.node_1_name || 'Node 1', node_2_name: settingsData.node_2_name || 'Node 2', node_3_name: settingsData.node_3_name || 'Node 3', node_4_name: settingsData.node_4_name || 'Node 4',
         theme_url: settingsData.theme_url || '',
         csp_static: settingsData.csp_static || '',
-        csp_api: settingsData.csp_api || ''
+        csp_api: settingsData.csp_api || '',
+        ua: settingsData.ua || 'cfsm'
       }
       applyMikusThemeOptions(settingsData.theme_options)
       changeAdminPassword.value = !settings.value.password_configured || !String(settings.value.username || '').trim()
@@ -1650,7 +1652,8 @@ const saveSettings = async () => {
       custom_bd_name: settings.value.custom_bd_name.trim(),
       node_1_name: settings.value.node_1_name.trim(), node_2_name: settings.value.node_2_name.trim(), node_3_name: settings.value.node_3_name.trim(), node_4_name: settings.value.node_4_name.trim(),
       csp_static: settings.value.csp_static || '',
-      csp_api: settings.value.csp_api || ''
+      csp_api: settings.value.csp_api || '',
+      ua: String(settings.value.ua ?? '').trim()
     }
   }
 
@@ -1896,13 +1899,21 @@ const buildInstallAsCfsmCommand = (command, runStep) => {
   return lines.join('\n')
 }
 
+// 站点 UA 不是默认值时，安装命令必须带上：否则首次上报就会被 /update 的防火墙规则拦截，
+// 连自动发现都无法完成。
+const installUserAgent = () => {
+  const ua = String(settings.value.ua ?? '').trim()
+  return ua && ua !== 'cfsm' ? ua : ''
+}
+
 const getCustomInstallCommand = () => {
   const HOST = selectedApiBase.value
   const autoUpdateFlag = autoUpdate.value ? 1 : 0
   const proxy = installGhProxy.value.trim()
   const version = installVersion.value.trim()
   const isDedicatedUserInstall = targetOs.value === 'linux' && installMode.value === 'cfsm-user'
-  // 安装命令只保留必须写入本地的参数：id / secret / url / auto_update。
+  // 安装命令只保留必须写入本地的参数：id / secret / url / auto_update，
+  // 以及站点 UA 非默认值时的 -ua（否则首次上报就会被 /update 的防火墙规则拦下）。
   // collect_interval、interval、connection_mode、ping_mode、reset_day、ct/cu/cm/bd、node_1..4、interface、rx/tx_correction
   // 等属于后端 /api 动态下发的配置（见 agentConfig.buildAgentConfig），Agent 启动后会自动拉取，无需写进安装命令。
   if (targetOs.value === 'windows') {
@@ -1917,16 +1928,20 @@ const getCustomInstallCommand = () => {
       `-url='${HOST}/update'`,
       `-auto_update='${autoUpdateFlag}'`
     )
+    const ua = installUserAgent()
+    if (ua) params.push(`-ua=${quotePowerShellArg(ua)}`)
     const ghUrl = buildGhRawUrl(proxy, '/huilang-me/cfsm-agent/main/install.ps1')
     return `$script = "$env:TEMP\\install-cf-probe.ps1"; Invoke-WebRequest -Uri ${quotePowerShellArg(ghUrl)} -OutFile $script -UseBasicParsing; PowerShell -ExecutionPolicy Bypass -File $script ${params.join(' ')}`
   }
   if (targetOs.value === 'docker') {
     const safeTag = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/.test(version) ? version : 'latest'
     const image = `ghcr.io/huilang-me/cfsm-agent:${safeTag}`
+    const ua = installUserAgent()
+    const uaEnv = ua ? ` -e UA=${quotePosixShellArg(ua)}` : ''
     return [
       'docker run -d --name cf-probe --restart=unless-stopped --network=host \\',
       '  -v cf-probe-data:/data \\',
-      `  -e SERVER_ID=${quotePosixShellArg(copyServerId.value)} -e SECRET=${quotePosixShellArg(apiSecret.value)} -e WORKER_URL=${quotePosixShellArg(`${HOST}/update`)} \\`,
+      `  -e SERVER_ID=${quotePosixShellArg(copyServerId.value)} -e SECRET=${quotePosixShellArg(apiSecret.value)} -e WORKER_URL=${quotePosixShellArg(`${HOST}/update`)}${uaEnv} \\`,
       `  ${image}`
     ].join('\n')
   }
@@ -1939,6 +1954,8 @@ const getCustomInstallCommand = () => {
     `-url=${HOST}/update`,
     `-auto_update=${autoUpdateFlag}`
   )
+  const ua = installUserAgent()
+  if (ua) params.push(`-ua=${quotePosixShellArg(ua)}`)
   const ghUrl = buildGhRawUrl(proxy, '/huilang-me/cfsm-agent/main/install.sh')
   const installCommand = `curl -fsSL ${quotePosixShellArg(ghUrl)} | sh -s -- ${params.join(' ')}`
   if (!isDedicatedUserInstall) return installCommand
@@ -1968,6 +1985,8 @@ const buildAutoDiscoveryCommand = ({ targetOs: os = 'linux', installMode: mode =
       `-auto_update='${autoUpdateFlag}'`
     )
     if (serverName) params.push(`-name=${quotePowerShellArg(serverName)}`)
+    const ua = installUserAgent()
+    if (ua) params.push(`-ua=${quotePowerShellArg(ua)}`)
     const ghUrl = buildGhRawUrl(proxy, '/huilang-me/cfsm-agent/main/install.ps1')
     return `$script = "$env:TEMP\\install-cf-probe.ps1"; Invoke-WebRequest -Uri ${quotePowerShellArg(ghUrl)} -OutFile $script -UseBasicParsing; PowerShell -ExecutionPolicy Bypass -File $script ${params.join(' ')}`
   }
@@ -1981,6 +2000,8 @@ const buildAutoDiscoveryCommand = ({ targetOs: os = 'linux', installMode: mode =
     `-auto_update=${autoUpdateFlag}`
   )
   if (serverName) params.push(`-name=${quotePosixShellArg(serverName)}`)
+  const ua = installUserAgent()
+  if (ua) params.push(`-ua=${quotePosixShellArg(ua)}`)
   const ghUrl = buildGhRawUrl(proxy, '/huilang-me/cfsm-agent/main/install.sh')
   const installCommand = `curl -fsSL ${quotePosixShellArg(ghUrl)} | sh -s -- ${params.join(' ')}`
   if (os !== 'linux' || mode !== 'cfsm-user') return installCommand

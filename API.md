@@ -235,6 +235,7 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
 - Headers：
   ```
   Content-Type: application/json
+  User-Agent: <自定义 UA，默认 cfsm>
   X-Agent-Version: <探针版本号>
   X-Agent-Config-Schema: 5
   X-Agent-Config-Md5: <最后成功应用的配置 MD5，首次为 none>
@@ -411,6 +412,11 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
   - 该分支只在 `id` 为空时生效；`id` 非空但查不到仍返回 404，已删除的服务器不会被自动重建。
   - 未开启自动发现时，空 `id` 的上报仍是原有 404，且不带任何自动发现响应头；Agent 应据此提示用户开启自动发现或改用 `-id` 安装后退出，不要静默重试。
   - `wss://.../update` 不参与自动发现：未绑定的 Agent 必须先通过 POST 建号，再按下发的 `connection_mode` 切换。
+- **自定义 UA（2026-10-27 新增）**：站点设置 `ua`（默认 `cfsm`，仅允许字母、数字、空格与 `. _ - / , : ; ( ) + = @ # * ? ~`，长度 ≤100）通过**独立通道**下发，不参与配置 MD5，也不会出现在配置 body 中：
+  - `POST /update`：`secret` 校验通过后，**走配置协商分支**的 `200` / `204` 响应头携带 `X-Ua: <当前站点 UA>`。以下 2xx 不携带（它们不加载站点设置）：流量校正确认的 `200 OK`、请求 schema 超出服务端支持范围时直接返回的 `200 OK`。`401` / `400` / `404` / `413` 同样不携带，避免向未认证请求暴露。
+  - `wss://.../update`：认证通过后，**本次 ack 携带配置协商字段**（`config_schema` / `config_md5`）时，顶层才有 `ua` 字段；普通 ack 不带。握手 `101` 与调度 `409` 响应不携带。
+  - Agent 收到后与本地上报 UA 比对，不同才写入配置文件的 `UA` 键；相同则忽略，避免每个上报周期重复写盘。
+  - 该值同时用于 `/update` 的 WAF 放行规则：修改站点 `ua` 时必须先在防火墙同时放行新旧两个值，再更新设置，否则 Agent 切换 UA 后会立即被拦截。
 - 失败：
   ```json
   { "error": "Invalid secret", "code": 401 }
@@ -429,6 +435,7 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
   { "type": "ack", "ts": 1737638343000, "persisted": true, "nextD1WriteAfterMs": 60000, "nextWssReportAfterMs": 60000 }
   ```
   `persisted` 表示本条消息是否触发 D1 历史写入；`nextD1WriteAfterMs` 是距离下一次允许写入 D1 的最短等待时间。WSS 首条成功指标会立即写入一次 D1，后续按该服务器 `report_interval` 控制写入频率（允许值沿用配置：`30/60/120/180` 秒；异常回退 `60` 秒）。`nextWssReportAfterMs` 是服务端建议的下一次 WSS 上报间隔：有前端实时订阅时使用服务器 `wss_report_interval`；无前端访问时使用 `report_interval`，但最低为 `60` 秒，不区分资源告警缓存是否活跃。缺失或非法的 WSS 间隔回退为 `2` 秒。
+  注意 `ua` 只随配置协商帧出现（Agent 首次上报、md5 变化或每 60 秒一次），不是每条 ack 都带。
   新版 WSS Agent 可在握手 URL query 中携带 `config_schema=6` / `config_md5=<md5>`，也兼容握手 Header `X-Agent-Config-Schema: 6` 与 `X-Agent-Config-Md5` 记录当前配置状态；当某次上报消息携带 `config_schema: 6` / `config_md5` 时，ack 会同时返回动态配置协商字段。schema `3` / `4` / `5` Agent 仍会收到各自版本的兼容配置：
   ```json
   {
@@ -437,6 +444,7 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
     "persisted": false,
     "nextD1WriteAfterMs": 30000,
     "nextWssReportAfterMs": 2000,
+    "ua": "cfsm",
     "config_schema": 6,
     "config_md5": "b4d7c0d...",
     "has_config": true,
