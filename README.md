@@ -10,7 +10,7 @@
   <a href="README-en.md">English</a>
 </p>
 
-[![Workers](https://img.shields.io/badge/Workers-2.8.7%20Beta6-f38020?style=flat-square&logo=cloudflare&logoColor=white)](version.json)
+[![Workers](https://img.shields.io/badge/Workers-2.8.7%20Beta7-f38020?style=flat-square&logo=cloudflare&logoColor=white)](version.json)
 [![GitHub Stars](https://img.shields.io/github/stars/huilang-me/CF-Server-Monitor?style=flat-square&logo=github)](https://github.com/huilang-me/CF-Server-Monitor/stargazers)
 [![GitHub Forks](https://img.shields.io/github/forks/huilang-me/CF-Server-Monitor?style=flat-square&logo=github)](https://github.com/huilang-me/CF-Server-Monitor/forks)
 [![License](https://img.shields.io/badge/License-MIT-16a34a?style=flat-square)](#许可证)
@@ -97,7 +97,7 @@ flowchart LR
 
 近期变化：
 
-- `2.8.7`：优化定时任务逻辑，降低CPU负载，避免超出免费额度限制；`/update` 增加 512KB 请求体上限，超限直接返回 413；服务器被删除后，其 Agent 的 WSS 连接会在 2 分钟内自动断开；WSS 上报增加帧大小校验，D1 抖动时不再中断已认证会话；批量样本只保留最新 300 条。新增服务端自动发现机制自动绑定服务器ID。新增自定义UA；导入导出包含设置选项；
+- `2.8.7`：优化定时任务逻辑，降低CPU负载，避免超出免费额度限制；`/update` 增加 512KB 请求体上限，超限直接返回 413；服务器被删除后，其 Agent 的 WSS 连接会在 2 分钟内自动断开；WSS 上报增加帧大小校验，D1 抖动时不再中断已认证会话；批量样本只保留最新 300 条。新增服务端自动发现机制自动绑定服务器ID。新增自定义UA；导入导出包含设置选项；资源负载告警新增 TCP/UDP 连接数监控。上报未探到公网 IP 时用请求头来源地址补位
 - `2.8.6`：WSS前端订阅采用250毫秒批量上报，新增SMTP通知渠道，新增月度流量阈值告警，移除旧版数据库兼容性，新增Docker安装方式。
 - `2.8.5`：支持自定义 Ping 节点名称；增加ICMP模式；优化WSS响应逻辑；API接口优化；原皮前端优化；新增4个ping节点。
 - `2.8.4`：新增 Agent WSS 上报和 WSS 开启时段，提升实时数据推送及时性，并允许非目标时段自动改用 POST 降低 Do 时长消耗；该能力要求 Agent 升级到 `v1.0.10+`。新增账户Do用量展示，优化无前端订阅时的 Do 实时广播请求，降低空闲额度消耗。通知设置新增自定义 Webhook 渠道, 新增前端wss超时配置。
@@ -254,11 +254,14 @@ loginctl enable-linger 用户名
 后台复制安装命令的目标系统支持选择 Docker，会生成如下容器命令（服务器 ID、Secret、Worker 地址已按当前服务器自动填充，镜像标签默认 `latest`，可在 Agent 版本栏自定义）：
 
 ```bash
-docker run -d --name cf-probe --restart=unless-stopped --network=host \
+docker run -d --name cf-probe --restart=unless-stopped --network=host --pid=host --cap-drop=ALL --cap-add=NET_RAW \
   -v cf-probe-data:/data \
+  -v /etc/os-release:/etc/os-release:ro \
   -e SERVER_ID=<服务器ID> -e SECRET='<API_SECRET>' -e WORKER_URL=https://<你的后台地址>/update \
   ghcr.io/huilang-me/cfsm-agent:latest
 ```
+
+群晖 DSM 需要额外挂载版本文件，否则面板只能显示镜像内的系统名：在命令中追加 `-v /etc/defaults/VERSION:/etc/defaults/VERSION:ro`。
 
 采集间隔、上报间隔、Ping 节点、网卡、流量重置日、上下行校正等运行参数由 Agent 按 `SERVER_ID` 从后台动态拉取，无需在命令中重复指定；更换镜像标签即回退/升级到指定版本。卸载容器：
 
@@ -319,6 +322,8 @@ npm run build:github-page
 5. 在小组件 Parameter 中填写服务器 ID，也可以写成 `id:SERVER_ID`。
 
 小组件会显示在线状态、CPU、内存、磁盘、月流量、实时上下行速率和更新时间。iOS 会按系统策略决定实际刷新频率。
+
+需要一次看多台时用 [scripts/ios-scriptable-widget-multi.js](scripts/ios-scriptable-widget-multi.js)：用法相同，Parameter 留空显示面板上所有公开服务器，填 `server-a,server-b` 只显示这几台，只填一台时显示详细视图（带三网延迟柱状图）。它请求的是 `/api/servers`（全站列表），服务器较多时会比单机版产生更多 D1 查询。
 
 ## 通知与告警
 
@@ -405,7 +410,7 @@ smtp://<用户名>:<密码>@<host>:<port>?from=<发件人>&to=<收件人1,收件
 
 - 离线告警：节点离线达到设定阈值后通知，恢复后发送恢复通知。
 - 到期提醒：服务器到期前 1 到 7 天内，按通知时区和到期通知时间每天提醒，也可关闭。
-- 资源负载告警：按 CPU、内存、磁盘、上下行速率等指标配置规则。
+- 资源负载告警：按 CPU、内存、磁盘、上下行速率、TCP/UDP 连接数等指标配置规则。
 
 配置后请先点击发送测试通知，再保存配置。
 
