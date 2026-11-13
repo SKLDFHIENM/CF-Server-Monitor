@@ -1,7 +1,7 @@
-import { buildAuthCookie, buildClearAuthCookie, buildUaCookie, buildClearUaCookie, checkAuth, simpleAuthResponse, validateCredentials, generateToken } from '../middleware/auth.js';
+import { buildAuthCookie, buildClearAuthCookie, buildUaCookie, buildClearUaCookie, checkAuth, simpleAuthResponse, validateCredentials, generateToken, hasAppPasswordAccess } from '../middleware/auth.js';
 import { getLatestMetricsForAllServers } from '../database/schema.js';
 import { getAllServers, clearServersListCache } from '../utils/cache.js';
-import { clearAppearanceSettingsCache, isValidThemeOptions, isWssReportConfigured, isWssReportEnabled, normalizeBooleanSetting, normalizeDefaultLanguage, normalizeDisplayMode, normalizeExpireNotificationTime, normalizeExpireReminder, normalizeFrontendWsTimeoutMinutes, normalizeLongHistoryPoints, normalizeNotificationLanguage, normalizeNotificationTemplate, normalizeNotificationTimezone, normalizeNotificationWebhookBody, normalizeNotificationWebhookFormat, normalizeNotificationWebhookHeaders, normalizeNotificationWebhookMethod, normalizePreferredTheme, normalizeResourceAlertRules, normalizeTgNotify, normalizeWssReportHours, saveSiteOptions, saveAppearanceOptions, saveThemeOptions, validateUserAgent, SITE_FIELDS, APPEARANCE_FIELDS, IMPORTABLE_SITE_FIELDS, IMPORTABLE_APPEARANCE_FIELDS, loadSiteSettings, loadAppearanceOptions } from '../utils/settings.js';
+import { clearAppearanceSettingsCache, isValidThemeOptions, isWssReportConfigured, isWssReportEnabled, normalizeBooleanSetting, normalizeDefaultLanguage, normalizeDisplayMode, normalizeExpireNotificationTime, normalizeExpireReminder, normalizeFrontendWsTimeoutMinutes, normalizeLongHistoryPoints, normalizeNotificationLanguage, normalizeNotificationTemplate, normalizeNotificationTimezone, normalizeNotificationWebhookBody, normalizeNotificationWebhookFormat, normalizeNotificationWebhookHeaders, normalizeNotificationWebhookMethod, normalizePreferredTheme, normalizeResourceAlertRules, normalizeTgNotify, normalizeWssReportHours, saveSiteOptions, saveAppearanceOptions, saveThemeOptions, validateAppPassword, validateUserAgent, SITE_FIELDS, APPEARANCE_FIELDS, IMPORTABLE_SITE_FIELDS, IMPORTABLE_APPEARANCE_FIELDS, loadSiteSettings, loadAppearanceOptions } from '../utils/settings.js';
 import { mergeMetricsIntoServer } from '../utils/metrics.js';
 import { normalizePctOrNull } from '../utils/traffic.js';
 import { verifyTurnstileToken, hashPassword } from '../utils/common.js';
@@ -491,7 +491,11 @@ async function handleLoginAction({ request, env, sys, data }) {
   const turnstileLoginEnabled = sys && (sys.turnstile_login_enabled === 'true' || sys.turnstile_login_enabled === true);
   const turnstileSecretKey = sys && sys.turnstile_secret_key || '';
 
-  if (turnstileEnabled || turnstileLoginEnabled) {
+  // 携带正确 App 访问口令的第三方客户端（iOS 小组件、脚本等）可跳过人机验证，
+  // 但仍需通过下方的用户名/口令校验，App 口令只放宽 Turnstile，不替代登录凭据。
+  const appPasswordBypassesTurnstile = hasAppPasswordAccess(request, sys);
+
+  if ((turnstileEnabled || turnstileLoginEnabled) && !appPasswordBypassesTurnstile) {
     const turnstileToken = request.headers.get('X-Turnstile-Token');
     const isTurnstileVerified = await verifyTurnstileToken(turnstileToken, turnstileSecretKey);
 
@@ -936,6 +940,16 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
         normalizedUserAgent = uaResult.value;
       }
 
+      // App 口令同理：长度或字符不合法时直接拒绝，避免落库后被 normalize 静默清空。
+      let normalizedAppPassword = '';
+      if (settings.app_password !== undefined) {
+        const appPasswordResult = validateAppPassword(settings.app_password);
+        if (!appPasswordResult.valid) {
+          return createBadRequestResponse('invalidAppPassword');
+        }
+        normalizedAppPassword = appPasswordResult.value;
+      }
+
       if (settings.appearance_options !== undefined && (
         settings.appearance_options === null ||
         typeof settings.appearance_options !== 'object' ||
@@ -1026,6 +1040,8 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
             siteOptions[field] = normalizedThemeUrl;
           } else if (field === 'ua') {
             siteOptions[field] = normalizedUserAgent;
+          } else if (field === 'app_password') {
+            siteOptions[field] = normalizedAppPassword;
           } else {
             siteOptions[field] = settings[field];
           }
